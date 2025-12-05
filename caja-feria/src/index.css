@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&display=swap');
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -6,5 +6,24 @@
 @layer base {
   body {
     @apply bg-bg text-text antialiased font-sans;
+    background:
+      radial-gradient(circle at 18% 14%, rgba(241, 123, 118, 0.25) 0%, transparent 26%),
+      radial-gradient(circle at 82% 10%, rgba(255, 199, 166, 0.28) 0%, transparent 36%),
+      radial-gradient(circle at 42% 82%, rgba(255, 235, 223, 0.6) 0%, transparent 50%),
+      linear-gradient(145deg, #f8e6e1 0%, #f6d8d0 45%, #f4c8be 100%);
+    background-size: 180% 180%;
+    animation: bg-shift 18s ease-in-out infinite;
+  }
+}
+
+@keyframes bg-shift {
+  0% {
+    background-position: 0% 30%;
+  }
+  50% {
+    background-position: 80% 70%;
+  }
+  100% {
+    background-position: 0% 30%;
   }
 }

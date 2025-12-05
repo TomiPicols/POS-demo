@@ -22,7 +22,7 @@ type OrderPanelProps = {
 const paymentLabels: Record<PaymentMethod, string> = {
   cash: 'Efectivo',
   card: 'Tarjeta',
-  transfer: 'Transfer',
+  transfer: 'Transferencia',
 };
 
 const OrderPanel = ({
@@ -36,33 +36,33 @@ const OrderPanel = ({
   onConfirm,
 }: OrderPanelProps) => {
   return (
-    <aside className="bg-panel text-white rounded-2xl p-4 border border-panelBorder shadow-card h-fit space-y-4">
+    <aside className="bg-card text-text rounded-2xl p-5 border border-borderSoft shadow-soft h-fit space-y-5">
       <div className="flex items-center justify-between">
         <div>
-          <div className="text-sm text-sidebarMuted">Pedido actual</div>
-          <div className="text-lg font-semibold">Mesa 5</div>
+          <div className="text-xs text-sidebarMuted">Pedido actual</div>
+          <div className="text-xl font-semibold">Mesa 5</div>
         </div>
-        <div className="w-8 h-8 rounded-full bg-panelAlt flex items-center justify-center text-sidebarMuted border border-panelBorder">
-          🔔
+        <div className="w-10 h-10 rounded-full bg-white/8 border border-borderSoft/70 flex items-center justify-center text-base">
+          {'\u{1F9FE}'}
         </div>
       </div>
 
       <div className="space-y-3 max-h-72 overflow-auto pr-1">
         {items.length === 0 && (
-          <div className="text-xs text-sidebarMuted">Agrega productos navideños al pedido.</div>
+          <div className="text-xs text-sidebarMuted">Agrega productos navide\u00f1os al pedido.</div>
         )}
         {items.map((item) => (
           <div
             key={item.id}
-            className="rounded-xl border border-panelBorder bg-panelAlt p-3 flex items-center justify-between"
+            className="rounded-xl border border-borderSoft bg-panelAlt flex items-center justify-between p-3"
           >
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-panel border border-panelBorder flex items-center justify-center text-lg">
+              <div className="w-10 h-10 rounded-xl bg-panel border border-borderSoft/70 flex items-center justify-center text-lg shadow-soft">
                 {item.emoji}
               </div>
               <div>
-                <div className="text-sm font-semibold">{item.name}</div>
-                <div className="text-xs text-sidebarMuted">
+                <div className="text-sm font-semibold leading-snug">{item.name}</div>
+                <div className="text-xs font-semibold text-accent">
                   ${item.price.toLocaleString('es-CL')}
                 </div>
               </div>
@@ -70,14 +70,14 @@ const OrderPanel = ({
             <div className="flex items-center gap-2">
               <button
                 onClick={() => onUpdateQuantity(item.id, -1)}
-                className="w-7 h-7 rounded-full border border-panelBorder flex items-center justify-center text-xs"
+                className="w-8 h-8 rounded-full border border-borderSoft flex items-center justify-center text-xs hover:border-accent/60"
               >
-                –
+                -
               </button>
-              <span className="text-sm font-medium">{item.quantity}</span>
+              <span className="text-sm font-medium min-w-4 text-center">{item.quantity}</span>
               <button
                 onClick={() => onUpdateQuantity(item.id, 1)}
-                className="w-7 h-7 rounded-full border border-panelBorder flex items-center justify-center text-xs"
+                className="w-8 h-8 rounded-full border border-borderSoft flex items-center justify-center text-xs hover:border-accent/60"
               >
                 +
               </button>
@@ -87,7 +87,7 @@ const OrderPanel = ({
       </div>
 
       <div className="space-y-2">
-        <div className="text-xs text-sidebarMuted">Método de pago</div>
+        <div className="text-xs text-sidebarMuted">M\u00e9todo de pago</div>
         <div className="grid grid-cols-3 gap-2">
           {(Object.keys(paymentLabels) as PaymentMethod[]).map((method) => {
             const active = paymentMethod === method;
@@ -95,10 +95,10 @@ const OrderPanel = ({
               <button
                 key={method}
                 onClick={() => onPaymentChange(method)}
-                className={`h-9 rounded-lg border text-sm transition ${
+                className={`h-10 rounded-lg border text-sm transition ${
                   active
-                    ? 'bg-white text-panel font-semibold'
-                    : 'bg-panelAlt border-panelBorder text-sidebarMuted hover:border-accent'
+                    ? 'bg-accent text-panel font-semibold border-transparent shadow-soft'
+                    : 'bg-panel border-borderSoft text-sidebarMuted hover:border-accent/40'
                 }`}
                 aria-pressed={active}
               >
@@ -110,11 +110,11 @@ const OrderPanel = ({
       </div>
 
       <div className="space-y-1 text-sm">
-        <div className="flex justify-between text-sidebarMuted">
+        <div className="flex justify-between text-textSoft">
           <span>Subtotal</span>
           <span>${subtotal.toLocaleString('es-CL')}</span>
         </div>
-        <div className="flex justify-between text-sidebarMuted">
+        <div className="flex justify-between text-textSoft">
           <span>Impuesto</span>
           <span>${tax.toLocaleString('es-CL')}</span>
         </div>
@@ -127,7 +127,7 @@ const OrderPanel = ({
       <button
         onClick={onConfirm}
         disabled={!items.length}
-        className="w-full h-11 rounded-lg bg-accent text-white text-sm font-semibold disabled:opacity-60 disabled:cursor-not-allowed shadow-soft"
+        className="w-full h-12 rounded-xl bg-accent text-panel text-sm font-semibold disabled:opacity-60 disabled:cursor-not-allowed shadow-soft hover:shadow-card transition focus:outline-none focus:ring-2 focus:ring-accent/30"
       >
         Confirmar pedido
       </button>

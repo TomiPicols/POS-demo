@@ -237,7 +237,7 @@ const Sales = () => {
               <button
                 key={p.id}
                 onClick={() => addProduct(p)}
-                className="bg-muted border border-borderSoft rounded-lg px-3 py-2 text-left hover:border-accent transition shadow-soft/70"
+                className="bg-muted border border-borderSoft rounded-lg px-3 py-2 text-left hover:border-accent transition shadow-soft"
               >
                 <div className="text-sm">{p.name}</div>
                 <div className="text-xs text-textSoft mt-1">
