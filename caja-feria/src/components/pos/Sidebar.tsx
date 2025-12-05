@@ -1,15 +1,45 @@
+import type { ReactNode } from 'react';
+
 type NavItem = {
   key: string;
   label: string;
-  emoji: string;
+  icon: ReactNode;
 };
 
 const navItems: NavItem[] = [
-  { key: 'overview', label: 'Overview', emoji: '\u{1F4CA}' },
-  { key: 'sales', label: 'Ventas', emoji: '\u{1F9FE}' },
-  { key: 'settings', label: 'Ajustes', emoji: '\u2699' },
-  { key: 'closing', label: 'Cierre', emoji: '\u23F1' },
-  { key: 'ai', label: 'IA', emoji: '\u2728' },
+  {
+    key: 'overview',
+    label: 'Overview',
+    icon: (
+      <svg viewBox="0 0 24 24" className="w-4 h-4" stroke="currentColor" fill="none" strokeWidth="1.6">
+        <path d="M4 12 11 5l3 3 6-6" />
+        <path d="M4 12v7h16v-9l-6 6-3-3z" />
+      </svg>
+    ),
+  },
+  {
+    key: 'sales',
+    label: 'Ventas',
+    icon: (
+      <svg viewBox="0 0 24 24" className="w-4 h-4" stroke="currentColor" fill="none" strokeWidth="1.6">
+        <path d="M4 7h16l-2 10H6z" />
+        <path d="M9 11h6" />
+        <circle cx="9" cy="18" r="1.2" />
+        <circle cx="15" cy="18" r="1.2" />
+      </svg>
+    ),
+  },
+  {
+    key: 'closing',
+    label: 'Cierre',
+    icon: (
+      <svg viewBox="0 0 24 24" className="w-4 h-4" stroke="currentColor" fill="none" strokeWidth="1.6">
+        <rect x="5" y="9" width="14" height="10" rx="2" />
+        <path d="M9 9V7a3 3 0 0 1 6 0v2" />
+        <path d="M12 13v3" />
+      </svg>
+    ),
+  },
 ];
 
 type SidebarProps = {
@@ -48,7 +78,7 @@ const Sidebar = ({ active, collapsed = false, onToggleCollapse, onNavigate }: Si
               }`}
               aria-pressed={isActive}
             >
-              <span className="text-base">{item.emoji}</span>
+              <span className="text-base">{item.icon}</span>
               {!collapsed && <span className="font-medium">{item.label}</span>}
             </button>
           );
@@ -65,3 +95,4 @@ const Sidebar = ({ active, collapsed = false, onToggleCollapse, onNavigate }: Si
 };
 
 export default Sidebar;
+

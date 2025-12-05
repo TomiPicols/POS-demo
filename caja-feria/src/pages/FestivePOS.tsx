@@ -33,6 +33,21 @@ type SaleRow = {
 const formatCLP = (value: number) =>
   new Intl.NumberFormat('es-CL', { maximumFractionDigits: 0 }).format(value);
 
+const paymentMethods = ['cash', 'card', 'transfer', 'pending'] as const;
+
+const paymentMethodDisplay: Record<PaymentMethod | 'other', string> = {
+  cash: 'Efectivo',
+  card: 'Tarjeta',
+  transfer: 'Transferencia',
+  pending: 'Pendiente',
+  other: 'Otro',
+};
+
+const getPaymentLabel = (method: string) => {
+  const key = paymentMethods.includes(method as PaymentMethod) ? (method as PaymentMethod) : 'other';
+  return paymentMethodDisplay[key] ?? method;
+};
+
 const todayRange = () => {
   const start = new Date();
   start.setHours(0, 0, 0, 0);
@@ -41,12 +56,22 @@ const todayRange = () => {
   return { from: start.toISOString(), to: end.toISOString() };
 };
 
+const navTitles: Record<string, string> = {
+  overview: 'Inicio',
+  sales: 'Ventas',
+  closing: 'Cierre',
+  settings: 'Ajustes',
+  ai: 'IA',
+};
+
 const FestivePOS = () => {
   const [activeNav, setActiveNav] = useState('sales');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<(typeof categories)[number]>('Todo');
   const [orderItems, setOrderItems] = useState<OrderItem[]>([]);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('card');
+  const [savingOrder, setSavingOrder] = useState(false);
+  const [orderError, setOrderError] = useState<string | null>(null);
   const [showOrderMobile, setShowOrderMobile] = useState(false);
   const [productQuery, setProductQuery] = useState('');
   const [overviewSales, setOverviewSales] = useState<SaleRow[]>([]);
@@ -96,12 +121,38 @@ const FestivePOS = () => {
     () => orderItems.reduce((acc, item) => acc + item.price * item.quantity, 0),
     [orderItems],
   );
-  const tax = Math.round(subtotal * 0.1);
-  const total = subtotal + tax;
+  const tax = 0;
+  const total = subtotal;
 
-  const confirmOrder = () => {
-    if (!orderItems.length) return;
-    setOrderItems([]);
+  const confirmOrder = async (): Promise<boolean> => {
+    if (!orderItems.length || savingOrder) return false;
+
+    setSavingOrder(true);
+    setOrderError(null);
+
+    const summaryNote = orderItems.map((item) => `${item.quantity}x ${item.name}`).join(' · ');
+    const notes =
+      paymentMethod === 'pending'
+        ? `PENDIENTE - ${summaryNote || 'Sin detalle'}`
+        : summaryNote || null;
+
+    try {
+      const { error } = await supabase.from('sales').insert({
+        payment_method: paymentMethod,
+        total_amount: total,
+        notes,
+      });
+
+      if (error) throw error;
+
+      setOrderItems([]);
+      return true;
+    } catch (err: any) {
+      setOrderError(err.message ?? 'No se pudo confirmar la venta.');
+      return false;
+    } finally {
+      setSavingOrder(false);
+    }
   };
 
   useEffect(() => {
@@ -155,15 +206,26 @@ const FestivePOS = () => {
     () => overviewSales.reduce((acc, s) => acc + s.total_amount, 0),
     [overviewSales],
   );
+  const pendingTotal = useMemo(
+    () =>
+      overviewSales
+        .filter((s) => s.payment_method === 'pending')
+        .reduce((acc, s) => acc + s.total_amount, 0),
+    [overviewSales],
+  );
 
   const closingTotals = useMemo(() => {
-    return closingSales.reduce(
-      (acc, sale) => {
-        if (acc[sale.payment_method] !== undefined) acc[sale.payment_method] += sale.total_amount;
-        return acc;
-      },
-      { cash: 0, card: 0, transfer: 0, other: 0 } as Record<string, number>,
-    );
+    const initial = { cash: 0, card: 0, transfer: 0, pending: 0, other: 0 } as Record<
+      PaymentMethod | 'other',
+      number
+    >;
+    return closingSales.reduce((acc, sale) => {
+      const method = paymentMethods.includes(sale.payment_method as PaymentMethod)
+        ? (sale.payment_method as PaymentMethod)
+        : 'other';
+      acc[method] += sale.total_amount;
+      return acc;
+    }, initial);
   }, [closingSales]);
 
   const closingTotal = useMemo(
@@ -171,9 +233,26 @@ const FestivePOS = () => {
     [closingSales],
   );
 
+  const closingPageSize = 5;
+  const [closingPage, setClosingPage] = useState(1);
+  const closingTotalPages = Math.max(1, Math.ceil(closingSales.length / closingPageSize));
+  const closingPageItems = useMemo(() => {
+    const start = (closingPage - 1) * closingPageSize;
+    return closingSales.slice(start, start + closingPageSize);
+  }, [closingSales, closingPage]);
+
   const cashCountedNumber = Number.parseInt(cashCounted || '0', 10) || 0;
   const cashExpected = closingTotals.cash || 0;
   const cashDiff = cashCountedNumber - cashExpected;
+  const todayLabel = useMemo(
+    () =>
+      new Intl.DateTimeFormat('es-CL', {
+        weekday: 'long',
+        day: '2-digit',
+        month: 'short',
+      }).format(new Date()),
+    [],
+  );
 
   const salesContent = (
     <div className="space-y-8">
@@ -215,7 +294,7 @@ const FestivePOS = () => {
               {filteredProducts.length} articulo{filteredProducts.length === 1 ? '' : 's'}
             </div>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+          <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-2 gap-4">
             {filteredProducts.map((product) => (
               <ProductCard key={product.id} product={product} onAdd={addProduct} />
             ))}
@@ -225,13 +304,15 @@ const FestivePOS = () => {
           </div>
         </div>
 
-        <div className="hidden xl:block">
+        <div className="hidden xl:block sticky top-4">
           <OrderPanel
             items={orderItems}
             subtotal={subtotal}
             tax={tax}
             total={total}
             paymentMethod={paymentMethod}
+            saving={savingOrder}
+            error={orderError}
             onPaymentChange={setPaymentMethod}
             onUpdateQuantity={updateQuantity}
             onConfirm={confirmOrder}
@@ -242,25 +323,19 @@ const FestivePOS = () => {
   );
 
   const overviewContent = (
-    <div className="space-y-6">
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-card border border-borderSoft rounded-2xl p-4 shadow-soft space-y-1">
-          <div className="text-xs text-textSoft uppercase tracking-[0.12em]">Ventas totales</div>
-          <div className="text-2xl font-bold">{overviewSales.length}</div>
+    <div className="space-y-5">
+      <div className="grid grid-cols-3 gap-2 sm:gap-3">
+        <div className="bg-card border border-borderSoft rounded-xl p-3 shadow-soft space-y-1">
+          <div className="text-[10px] text-textSoft uppercase tracking-[0.16em]">Ventas totales</div>
+          <div className="text-xl font-bold">{overviewSales.length}</div>
         </div>
-        <div className="bg-card border border-borderSoft rounded-2xl p-4 shadow-soft space-y-1">
-          <div className="text-xs text-textSoft uppercase tracking-[0.12em]">Ingresos</div>
-          <div className="text-2xl font-bold">${formatCLP(totalSalesAmount)}</div>
+        <div className="bg-card border border-borderSoft rounded-xl p-3 shadow-soft space-y-1">
+          <div className="text-[10px] text-textSoft uppercase tracking-[0.16em]">Ingresos</div>
+          <div className="text-xl font-bold">${formatCLP(totalSalesAmount)}</div>
         </div>
-        <div className="bg-card border border-borderSoft rounded-2xl p-4 shadow-soft space-y-1">
-          <div className="text-xs text-textSoft uppercase tracking-[0.12em]">Ticket prom.</div>
-          <div className="text-2xl font-bold">
-            {overviewSales.length ? `$${formatCLP(Math.round(totalSalesAmount / overviewSales.length))}` : '-'}
-          </div>
-        </div>
-        <div className="bg-card border border-borderSoft rounded-2xl p-4 shadow-soft space-y-1">
-          <div className="text-xs text-textSoft uppercase tracking-[0.12em]">Metodos</div>
-          <div className="text-lg font-semibold text-textSoft">Tarjeta · Efectivo · Transfer</div>
+        <div className="bg-card border border-borderSoft rounded-xl p-3 shadow-soft space-y-1">
+          <div className="text-[10px] text-textSoft uppercase tracking-[0.16em]">Pendiente</div>
+          <div className="text-xl font-bold text-highlight">${formatCLP(pendingTotal)}</div>
         </div>
       </div>
 
@@ -302,7 +377,7 @@ const FestivePOS = () => {
                     })}
                   </td>
                   <td className="py-2 pr-4 font-semibold">${formatCLP(s.total_amount)}</td>
-                  <td className="py-2 pr-4 uppercase text-xs">{s.payment_method}</td>
+                  <td className="py-2 pr-4 uppercase text-xs">{getPaymentLabel(s.payment_method)}</td>
                   <td className="py-2 pr-4 text-textSoft">{s.notes || '—'}</td>
                 </tr>
               ))}
@@ -321,25 +396,15 @@ const FestivePOS = () => {
   );
 
   const closingContent = (
-    <div className="space-y-6">
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-card border border-borderSoft rounded-2xl p-4 shadow-soft space-y-1">
-          <div className="text-xs text-textSoft uppercase tracking-[0.12em]">Ventas hoy</div>
-          <div className="text-2xl font-bold">{closingSales.length}</div>
+    <div className="space-y-5">
+      <div className="grid grid-cols-2 gap-3">
+        <div className="bg-card border border-borderSoft rounded-xl p-3 shadow-soft space-y-1">
+          <div className="text-[10px] text-textSoft uppercase tracking-[0.16em]">Ventas hoy</div>
+          <div className="text-xl font-bold">{closingSales.length}</div>
         </div>
-        <div className="bg-card border border-borderSoft rounded-2xl p-4 shadow-soft space-y-1">
-          <div className="text-xs text-textSoft uppercase tracking-[0.12em]">Total del dia</div>
-          <div className="text-2xl font-bold">${formatCLP(closingTotal)}</div>
-        </div>
-        <div className="bg-card border border-borderSoft rounded-2xl p-4 shadow-soft space-y-1">
-          <div className="text-xs text-textSoft uppercase tracking-[0.12em]">Efectivo</div>
-          <div className="text-xl font-semibold">${formatCLP(closingTotals.cash || 0)}</div>
-        </div>
-        <div className="bg-card border border-borderSoft rounded-2xl p-4 shadow-soft space-y-1">
-          <div className="text-xs text-textSoft uppercase tracking-[0.12em]">Ticket prom.</div>
-          <div className="text-xl font-semibold">
-            {closingSales.length ? `$${formatCLP(Math.round(closingTotal / closingSales.length))}` : '-'}
-          </div>
+        <div className="bg-card border border-borderSoft rounded-xl p-3 shadow-soft space-y-1">
+          <div className="text-[10px] text-textSoft uppercase tracking-[0.16em]">Total del dia</div>
+          <div className="text-xl font-bold">${formatCLP(closingTotal)}</div>
         </div>
       </div>
 
@@ -371,7 +436,7 @@ const FestivePOS = () => {
                 </tr>
               </thead>
               <tbody>
-                {closingSales.map((s) => (
+                {closingPageItems.map((s) => (
                   <tr key={s.id} className="border-t border-borderSoft/70">
                     <td className="py-2 pr-4">
                       {new Date(s.created_at).toLocaleTimeString('es-CL', {
@@ -380,7 +445,7 @@ const FestivePOS = () => {
                       })}
                     </td>
                     <td className="py-2 pr-4 font-semibold">${formatCLP(s.total_amount)}</td>
-                    <td className="py-2 pr-4 uppercase text-xs">{s.payment_method}</td>
+                    <td className="py-2 pr-4 uppercase text-xs">{getPaymentLabel(s.payment_method)}</td>
                     <td className="py-2 pr-4 text-textSoft">{s.notes || '—'}</td>
                   </tr>
                 ))}
@@ -394,10 +459,47 @@ const FestivePOS = () => {
               </tbody>
             </table>
           </div>
+          {closingSales.length > closingPageSize && (
+            <div className="flex items-center justify-end gap-2 text-xs text-textSoft">
+              <button
+                onClick={() => setClosingPage((p) => Math.max(1, p - 1))}
+                disabled={closingPage === 1}
+                className="h-8 px-3 rounded-lg border border-borderSoft bg-panel hover:border-accent/40 disabled:opacity-50 disabled:cursor-not-allowed transition"
+              >
+                Anterior
+              </button>
+              <div className="text-sm font-medium">
+                {closingPage} / {closingTotalPages}
+              </div>
+              <button
+                onClick={() => setClosingPage((p) => Math.min(closingTotalPages, p + 1))}
+                disabled={closingPage === closingTotalPages}
+                className="h-8 px-3 rounded-lg border border-borderSoft bg-panel hover:border-accent/40 disabled:opacity-50 disabled:cursor-not-allowed transition"
+              >
+                Siguiente
+              </button>
+            </div>
+          )}
         </div>
 
         <div className="bg-card border border-borderSoft rounded-2xl p-5 shadow-soft space-y-4">
           <div className="text-lg font-semibold">Cierre de caja</div>
+
+          <div className="space-y-2 text-sm">
+            <div className="text-xs text-textSoft uppercase tracking-[0.12em]">Desglose por método</div>
+            <div className="grid grid-cols-2 gap-2">
+              {(['cash', 'card', 'transfer', 'pending'] as const).map((method) => (
+                <div
+                  key={method}
+                  className="flex items-center justify-between rounded-lg bg-panelAlt border border-borderSoft px-3 py-2"
+                >
+                  <span className="text-textSoft">{getPaymentLabel(method)}</span>
+                  <span className="font-semibold">${formatCLP(closingTotals[method])}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
           <div className="space-y-2 text-sm">
             <div className="flex justify-between text-textSoft">
               <span>Efectivo esperado</span>
@@ -443,8 +545,34 @@ const FestivePOS = () => {
         onNavigate={setActiveNav}
       />
 
-      <div className="flex-1 min-h-screen pb-24 md:pb-10">
+      <div
+        className={`flex-1 min-h-screen ${
+          activeNav === 'sales' ? 'pb-56 md:pb-16' : 'pb-24 md:pb-10'
+        }`}
+      >
         <div className="max-w-6xl mx-auto px-4 py-8 space-y-8">
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-white/70 border border-borderSoft px-4 py-3 shadow-soft backdrop-blur-md">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-accent/30 to-accent/10 border border-accent/30 flex items-center justify-center text-accent text-lg shadow-soft">
+                {'\u{1F384}'}
+              </div>
+              <div>
+                <p className="text-[11px] uppercase tracking-[0.18em] text-textSoft">Caja navideña</p>
+                <h1 className="text-xl font-bold leading-tight">{navTitles[activeNav] ?? 'Panel'}</h1>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 text-sm">
+              <div className="flex items-center gap-2 rounded-xl bg-panel border border-borderSoft px-3 py-1.5 shadow-soft">
+                <span className="text-xs text-textSoft">Hoy</span>
+                <span className="font-semibold capitalize">{todayLabel}</span>
+              </div>
+              <div className="rounded-xl bg-panel border border-borderSoft px-3 py-1.5 shadow-soft">
+                <span className="text-xs text-textSoft mr-1">Modo</span>
+                <span className="font-semibold">Caja feria</span>
+              </div>
+            </div>
+          </div>
+
           {activeNav === 'overview' && overviewContent}
           {activeNav === 'sales' && salesContent}
           {activeNav === 'closing' && closingContent}
@@ -459,7 +587,7 @@ const FestivePOS = () => {
 
       {activeNav === 'sales' && (
         <>
-          <div className="xl:hidden fixed bottom-24 left-1/2 -translate-x-1/2 w-[calc(100%-32px)] max-w-lg z-40">
+          <div className="xl:hidden fixed bottom-32 left-1/2 -translate-x-1/2 w-[calc(100%-32px)] max-w-lg z-40">
             <div className="bg-panel border border-panelBorder text-text shadow-card rounded-2xl px-4 py-3 flex items-center justify-between">
               <div>
                 <div className="text-xs text-sidebarMuted">Pedido en curso</div>
@@ -478,9 +606,9 @@ const FestivePOS = () => {
             <div className="xl:hidden fixed inset-0 bg-black/45 z-50 flex items-end backdrop-blur-md">
               <div className="w-full bg-panel text-text rounded-t-2xl p-4 border-t border-panelBorder shadow-card max-h-[80vh] overflow-hidden">
                 <div className="flex items-center justify-between mb-3">
-                  <div>
+                  <div className="text-left">
                     <div className="text-xs text-sidebarMuted">Pedido actual</div>
-                    <div className="text-lg font-semibold">Mesa 5</div>
+                    <div className="text-lg font-semibold">En curso</div>
                   </div>
                   <button
                     onClick={() => setShowOrderMobile(false)}
@@ -496,11 +624,14 @@ const FestivePOS = () => {
                     tax={tax}
                     total={total}
                     paymentMethod={paymentMethod}
+                    saving={savingOrder}
+                    error={orderError}
                     onPaymentChange={setPaymentMethod}
                     onUpdateQuantity={updateQuantity}
-                    onConfirm={() => {
-                      confirmOrder();
-                      setShowOrderMobile(false);
+                    onConfirm={async () => {
+                      const success = await confirmOrder();
+                      if (success) setShowOrderMobile(false);
+                      return success;
                     }}
                   />
                 </div>
@@ -516,3 +647,6 @@ const FestivePOS = () => {
 };
 
 export default FestivePOS;
+
+
+

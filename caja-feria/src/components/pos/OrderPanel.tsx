@@ -6,7 +6,7 @@ type OrderItem = {
   quantity: number;
 };
 
-type PaymentMethod = 'cash' | 'card' | 'transfer';
+type PaymentMethod = 'cash' | 'card' | 'transfer' | 'pending';
 
 type OrderPanelProps = {
   items: OrderItem[];
@@ -14,15 +14,18 @@ type OrderPanelProps = {
   tax: number;
   total: number;
   paymentMethod: PaymentMethod;
+  saving?: boolean;
+  error?: string | null;
   onPaymentChange: (method: PaymentMethod) => void;
   onUpdateQuantity: (id: string, delta: number) => void;
-  onConfirm: () => void;
+  onConfirm: () => void | Promise<boolean>;
 };
 
 const paymentLabels: Record<PaymentMethod, string> = {
   cash: 'Efectivo',
   card: 'Tarjeta',
   transfer: 'Transferencia',
+  pending: 'Pendiente',
 };
 
 const OrderPanel = ({
@@ -31,16 +34,21 @@ const OrderPanel = ({
   tax,
   total,
   paymentMethod,
+  saving = false,
+  error = null,
   onPaymentChange,
   onUpdateQuantity,
   onConfirm,
 }: OrderPanelProps) => {
+  const confirmLabel =
+    saving ? 'Guardando...' : paymentMethod === 'pending' ? 'Guardar pendiente' : 'Confirmar pedido';
+
   return (
     <aside className="bg-card text-text rounded-2xl p-5 border border-borderSoft shadow-soft h-fit space-y-5">
       <div className="flex items-center justify-between">
         <div>
           <div className="text-xs text-sidebarMuted">Pedido actual</div>
-          <div className="text-xl font-semibold">Mesa 5</div>
+          <div className="text-xl font-semibold">En curso</div>
         </div>
         <div className="w-10 h-10 rounded-full bg-white/8 border border-borderSoft/70 flex items-center justify-center text-base">
           {'\u{1F9FE}'}
@@ -88,7 +96,7 @@ const OrderPanel = ({
 
       <div className="space-y-2">
         <div className="text-xs text-sidebarMuted">M\u00e9todo de pago</div>
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
           {(Object.keys(paymentLabels) as PaymentMethod[]).map((method) => {
             const active = paymentMethod === method;
             return (
@@ -114,22 +122,30 @@ const OrderPanel = ({
           <span>Subtotal</span>
           <span>${subtotal.toLocaleString('es-CL')}</span>
         </div>
-        <div className="flex justify-between text-textSoft">
-          <span>Impuesto</span>
-          <span>${tax.toLocaleString('es-CL')}</span>
-        </div>
+        {!!tax && (
+          <div className="flex justify-between text-textSoft">
+            <span>Impuesto</span>
+            <span>${tax.toLocaleString('es-CL')}</span>
+          </div>
+        )}
         <div className="flex justify-between text-base font-semibold">
           <span>Total</span>
           <span>${total.toLocaleString('es-CL')}</span>
         </div>
       </div>
 
+      {error && (
+        <div className="text-xs text-accent bg-accent/10 border border-accent/30 rounded-lg px-3 py-2">
+          {error}
+        </div>
+      )}
+
       <button
         onClick={onConfirm}
-        disabled={!items.length}
-        className="w-full h-12 rounded-xl bg-accent text-panel text-sm font-semibold disabled:opacity-60 disabled:cursor-not-allowed shadow-soft hover:shadow-card transition focus:outline-none focus:ring-2 focus:ring-accent/30"
+        disabled={!items.length || saving}
+        className="w-full h-11 rounded-xl bg-accent text-panel text-sm font-semibold disabled:opacity-60 disabled:cursor-not-allowed shadow-soft hover:shadow-card transition focus:outline-none focus:ring-2 focus:ring-accent/30"
       >
-        Confirmar pedido
+        {confirmLabel}
       </button>
     </aside>
   );

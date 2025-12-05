@@ -7,12 +7,29 @@
   body {
     @apply bg-bg text-text antialiased font-sans;
     background:
-      radial-gradient(circle at 18% 14%, rgba(241, 123, 118, 0.25) 0%, transparent 26%),
-      radial-gradient(circle at 82% 10%, rgba(255, 199, 166, 0.28) 0%, transparent 36%),
-      radial-gradient(circle at 42% 82%, rgba(255, 235, 223, 0.6) 0%, transparent 50%),
-      linear-gradient(145deg, #f8e6e1 0%, #f6d8d0 45%, #f4c8be 100%);
-    background-size: 180% 180%;
-    animation: bg-shift 18s ease-in-out infinite;
+      radial-gradient(1100px circle at 12% -10%, rgba(47, 122, 97, 0.08), transparent 48%),
+      radial-gradient(900px circle at 86% 6%, rgba(196, 75, 64, 0.06), transparent 46%),
+      radial-gradient(520px circle at 48% 120%, rgba(47, 122, 97, 0.07), transparent 55%),
+      linear-gradient(180deg, #f9fbf8 0%, #f6f8f4 45%, #f4f6f2 100%),
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 420 420'%3E%3Cdefs%3E%3ClinearGradient id='leaf' x1='0' y1='0' x2='0' y2='1'%3E%3Cstop offset='0%25' stop-color='%233ea37a'/%3E%3Cstop offset='100%25' stop-color='%232f7a61'/%3E%3C/linearGradient%3E%3ClinearGradient id='trunk' x1='0' y1='0' x2='0' y2='1'%3E%3Cstop offset='0%25' stop-color='%23c2b59f'/%3E%3Cstop offset='100%25' stop-color='%23937f64'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpath d='M210 36 L340 228 L80 228 Z' fill='url(%23leaf)' opacity='0.85'/%3E%3Cpath d='M210 118 L360 298 L60 298 Z' fill='url(%23leaf)' opacity='0.7'/%3E%3Cpath d='M210 198 L390 370 L30 370 Z' fill='url(%23leaf)' opacity='0.65'/%3E%3Crect x='186' y='330' width='48' height='60' rx='8' fill='url(%23trunk)' opacity='0.6'/%3E%3Ccircle cx='210' cy='92' r='6' fill='%23c94b40' opacity='0.3'/%3E%3Ccircle cx='250' cy='172' r='6' fill='%23c94b40' opacity='0.3'/%3E%3Ccircle cx='170' cy='242' r='7' fill='%23c94b40' opacity='0.25'/%3E%3Ccircle cx='230' cy='310' r='6' fill='%23c94b40' opacity='0.25'/%3E%3Ccircle cx='140' cy='320' r='5' fill='%23c94b40' opacity='0.25'/%3E%3C/svg%3E") right 80px bottom 60px / 360px auto no-repeat;
+    background-size: 140% 140%, 140% 140%, 140% 140%, 140% 140%, 360px auto;
+    animation: bg-shift 22s ease-in-out infinite;
+    position: relative;
+  }
+
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background:
+      radial-gradient(34px circle at 22% 32%, rgba(47, 122, 97, 0.14), transparent 70%),
+      radial-gradient(30px circle at 86% 18%, rgba(196, 75, 64, 0.12), transparent 70%),
+      radial-gradient(50px circle at 12% 78%, rgba(47, 122, 97, 0.12), transparent 72%);
+    background-repeat: no-repeat;
+    mix-blend-mode: overlay;
+    opacity: 0.18;
+    z-index: 0;
   }
 }
 
