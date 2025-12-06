@@ -40,6 +40,17 @@ const navItems: NavItem[] = [
       </svg>
     ),
   },
+  {
+    key: 'pending',
+    label: 'Pendientes',
+    icon: (
+      <svg viewBox="0 0 24 24" className="w-4 h-4" stroke="currentColor" fill="none" strokeWidth="1.6">
+        <path d="M5 12h14" />
+        <path d="M12 5v14" />
+        <circle cx="12" cy="12" r="9" />
+      </svg>
+    ),
+  },
 ];
 
 type SidebarProps = {

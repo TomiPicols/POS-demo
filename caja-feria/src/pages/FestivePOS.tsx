@@ -60,6 +60,7 @@ const navTitles: Record<string, string> = {
   overview: 'Inicio',
   sales: 'Ventas',
   closing: 'Cierre',
+  pending: 'Pendientes',
   settings: 'Ajustes',
   ai: 'IA',
 };
@@ -81,6 +82,10 @@ const FestivePOS = () => {
   const [loadingClosing, setLoadingClosing] = useState(false);
   const [closingError, setClosingError] = useState<string | null>(null);
   const [cashCounted, setCashCounted] = useState('');
+  const [pendingSales, setPendingSales] = useState<SaleRow[]>([]);
+  const [loadingPending, setLoadingPending] = useState(false);
+  const [pendingError, setPendingError] = useState<string | null>(null);
+  const [pendingFilter, setPendingFilter] = useState<PaymentMethod | 'all'>('all');
 
   const filteredProducts = useMemo(() => {
     const byCategory =
@@ -165,6 +170,11 @@ const FestivePOS = () => {
     loadClosingSales();
   }, [activeNav]);
 
+  useEffect(() => {
+    if (activeNav !== 'pending') return;
+    loadPendingSales();
+  }, [activeNav, pendingFilter]);
+
   const loadOverviewSales = async () => {
     setLoadingOverview(true);
     setOverviewError(null);
@@ -180,6 +190,43 @@ const FestivePOS = () => {
     } finally {
       setLoadingOverview(false);
     }
+  };
+
+  const loadPendingSales = async () => {
+    setLoadingPending(true);
+    setPendingError(null);
+    try {
+      const query = supabase
+        .from('sales')
+        .select('id, created_at, total_amount, payment_method, notes')
+        .order('created_at', { ascending: false });
+
+      if (pendingFilter !== 'all') {
+        query.eq('payment_method', pendingFilter);
+      } else {
+        query.eq('payment_method', 'pending');
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+      setPendingSales(data || []);
+    } catch (err: any) {
+      setPendingError(err.message ?? 'No se pudieron cargar los pendientes.');
+    } finally {
+      setLoadingPending(false);
+    }
+  };
+
+  const markPendingAsPaid = async (saleId: number, method: PaymentMethod) => {
+    setPendingError(null);
+    const { error } = await supabase.from('sales').update({ payment_method: method }).eq('id', saleId);
+    if (error) {
+      setPendingError(error.message ?? 'No se pudo actualizar el pedido.');
+      return;
+    }
+    await loadPendingSales();
+    if (activeNav === 'overview') loadOverviewSales();
+    if (activeNav === 'closing') loadClosingSales();
   };
 
   const loadClosingSales = async () => {
@@ -241,6 +288,92 @@ const FestivePOS = () => {
     return closingSales.slice(start, start + closingPageSize);
   }, [closingSales, closingPage]);
 
+  const pendingContent = (
+    <div className="space-y-5">
+      <div className="bg-card border border-borderSoft rounded-2xl p-5 shadow-soft space-y-4">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div>
+            <div className="text-lg font-semibold">Pedidos pendientes</div>
+            <div className="text-xs text-textSoft">
+              {loadingPending ? 'Cargando...' : `${pendingSales.length} registro(s)`}
+            </div>
+          </div>
+          <div className="flex items-center gap-2 text-sm">
+            <select
+              value={pendingFilter}
+              onChange={(e) => setPendingFilter(e.target.value as PaymentMethod | 'all')}
+              className="h-10 rounded-lg border border-borderSoft bg-panel px-3 text-sm text-text focus:outline-none focus:ring-2 focus:ring-accent/30"
+            >
+              <option value="all">Solo pendientes</option>
+              <option value="cash">Efectivo</option>
+              <option value="card">Tarjeta</option>
+              <option value="transfer">Transferencia</option>
+              <option value="pending">Pendiente</option>
+            </select>
+            <button
+              onClick={loadPendingSales}
+              className="h-10 px-3 rounded-lg border border-borderSoft text-sm text-text hover:border-accent/40 transition"
+            >
+              Refrescar
+            </button>
+          </div>
+        </div>
+        {pendingError && <div className="text-sm text-accent">{pendingError}</div>}
+
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs text-textSoft">
+                <th className="py-2 pr-4">Fecha</th>
+                <th className="py-2 pr-4">Monto</th>
+                <th className="py-2 pr-4">Método</th>
+                <th className="py-2 pr-4">Notas</th>
+                <th className="py-2 pr-4">Acción</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pendingSales.map((s) => (
+                <tr key={s.id} className="border-t border-borderSoft/70">
+                  <td className="py-2 pr-4">
+                    {new Date(s.created_at).toLocaleString('es-CL', {
+                      day: '2-digit',
+                      month: '2-digit',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })}
+                  </td>
+                  <td className="py-2 pr-4 font-semibold">${formatCLP(s.total_amount)}</td>
+                  <td className="py-2 pr-4 uppercase text-xs">{getPaymentLabel(s.payment_method)}</td>
+                  <td className="py-2 pr-4 text-textSoft">{s.notes || '—'}</td>
+                  <td className="py-2 pr-4">
+                    <div className="flex gap-2">
+                      {(['cash', 'card', 'transfer'] as const).map((method) => (
+                        <button
+                          key={method}
+                          onClick={() => markPendingAsPaid(s.id, method)}
+                          className="h-8 px-3 rounded-lg border border-borderSoft bg-panel hover:border-accent/40 text-xs font-semibold transition"
+                        >
+                          {getPaymentLabel(method)}
+                        </button>
+                      ))}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {!pendingSales.length && !loadingPending && (
+                <tr>
+                  <td className="py-4 text-xs text-textSoft" colSpan={5}>
+                    No hay pedidos pendientes.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+
   const cashCountedNumber = Number.parseInt(cashCounted || '0', 10) || 0;
   const cashExpected = closingTotals.cash || 0;
   const cashDiff = cashCountedNumber - cashExpected;
@@ -294,7 +427,7 @@ const FestivePOS = () => {
               {filteredProducts.length} articulo{filteredProducts.length === 1 ? '' : 's'}
             </div>
           </div>
-          <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
             {filteredProducts.map((product) => (
               <ProductCard key={product.id} product={product} onAdd={addProduct} />
             ))}
@@ -318,6 +451,8 @@ const FestivePOS = () => {
             onConfirm={confirmOrder}
           />
         </div>
+
+        <div className="h-[10px] sm:h-[10px] md:h-0 lg:h-[10px]" aria-hidden />
       </div>
     </div>
   );
@@ -547,7 +682,9 @@ const FestivePOS = () => {
 
       <div
         className={`flex-1 min-h-screen ${
-          activeNav === 'sales' ? 'pb-56 md:pb-16' : 'pb-24 md:pb-10'
+          activeNav === 'sales'
+            ? 'pb-[175px] sm:pb-[235px] md:pb-[265px] lg:pb-[150px]'
+            : 'pb-24 md:pb-12 lg:pb-10'
         }`}
       >
         <div className="max-w-6xl mx-auto px-4 py-8 space-y-8">
@@ -576,6 +713,7 @@ const FestivePOS = () => {
           {activeNav === 'overview' && overviewContent}
           {activeNav === 'sales' && salesContent}
           {activeNav === 'closing' && closingContent}
+          {activeNav === 'pending' && pendingContent}
           {activeNav !== 'overview' && activeNav !== 'sales' && activeNav !== 'closing' && (
             <div className="bg-panel border border-borderSoft rounded-2xl p-6 shadow-soft">
               <div className="text-lg font-semibold mb-2">Proximamente</div>
