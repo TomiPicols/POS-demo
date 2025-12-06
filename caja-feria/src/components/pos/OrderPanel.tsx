@@ -13,6 +13,7 @@ type OrderPanelProps = {
   subtotal: number;
   tax: number;
   total: number;
+  orderLabel?: string;
   paymentMethod: PaymentMethod;
   saving?: boolean;
   error?: string | null;
@@ -33,6 +34,7 @@ const OrderPanel = ({
   subtotal,
   tax,
   total,
+  orderLabel = 'Pedido en curso',
   paymentMethod,
   saving = false,
   error = null,
@@ -48,7 +50,7 @@ const OrderPanel = ({
       <div className="flex items-center justify-between">
         <div>
           <div className="text-xs text-sidebarMuted">Pedido actual</div>
-          <div className="text-xl font-semibold">En curso</div>
+          <div className="text-xl font-semibold">{orderLabel}</div>
         </div>
         <div className="w-10 h-10 rounded-full bg-white/8 border border-borderSoft/70 flex items-center justify-center text-base">
           {'\u{1F9FE}'}
@@ -57,7 +59,7 @@ const OrderPanel = ({
 
       <div className="space-y-3 max-h-72 overflow-auto pr-1">
         {items.length === 0 && (
-          <div className="text-xs text-sidebarMuted">Agrega productos navide\u00f1os al pedido.</div>
+          <div className="text-xs text-sidebarMuted">Agrega productos al pedido.</div>
         )}
         {items.map((item) => (
           <div
@@ -95,7 +97,7 @@ const OrderPanel = ({
       </div>
 
       <div className="space-y-2">
-        <div className="text-xs text-sidebarMuted">M\u00e9todo de pago</div>
+        <div className="text-xs text-sidebarMuted">Pago</div>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
           {(Object.keys(paymentLabels) as PaymentMethod[]).map((method) => {
             const active = paymentMethod === method;

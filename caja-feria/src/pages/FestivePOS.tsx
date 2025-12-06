@@ -30,6 +30,13 @@ type SaleRow = {
   notes: string | null;
 };
 
+type DraftOrder = {
+  id: string;
+  label: string;
+  items: OrderItem[];
+  paymentMethod: PaymentMethod;
+};
+
 const formatCLP = (value: number) =>
   new Intl.NumberFormat('es-CL', { maximumFractionDigits: 0 }).format(value);
 
@@ -65,12 +72,17 @@ const navTitles: Record<string, string> = {
   ai: 'IA',
 };
 
+type OverviewDateFilter = 'today' | 'yesterday' | 'last7' | 'all';
+type OverviewMethodFilter = PaymentMethod | 'all' | 'pending';
+
 const FestivePOS = () => {
   const [activeNav, setActiveNav] = useState('sales');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<(typeof categories)[number]>('Todo');
-  const [orderItems, setOrderItems] = useState<OrderItem[]>([]);
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('card');
+  const [drafts, setDrafts] = useState<DraftOrder[]>([
+    { id: '1', label: 'Pedido 1', items: [], paymentMethod: 'card' },
+  ]);
+  const [activeDraftId, setActiveDraftId] = useState('1');
   const [savingOrder, setSavingOrder] = useState(false);
   const [orderError, setOrderError] = useState<string | null>(null);
   const [showOrderMobile, setShowOrderMobile] = useState(false);
@@ -81,11 +93,23 @@ const FestivePOS = () => {
   const [closingSales, setClosingSales] = useState<SaleRow[]>([]);
   const [loadingClosing, setLoadingClosing] = useState(false);
   const [closingError, setClosingError] = useState<string | null>(null);
+  const [savingClosing, setSavingClosing] = useState(false);
+  const [closingNotes, setClosingNotes] = useState('');
   const [cashCounted, setCashCounted] = useState('');
   const [pendingSales, setPendingSales] = useState<SaleRow[]>([]);
   const [loadingPending, setLoadingPending] = useState(false);
   const [pendingError, setPendingError] = useState<string | null>(null);
   const [pendingFilter, setPendingFilter] = useState<PaymentMethod | 'all'>('all');
+  const [selectedPendingId, setSelectedPendingId] = useState<number | null>(null);
+  const [pendingModalSale, setPendingModalSale] = useState<SaleRow | null>(null);
+  const [pendingModalMethod, setPendingModalMethod] = useState<PaymentMethod>('cash');
+  const [pendingModalNote, setPendingModalNote] = useState('');
+  const [overviewDateFilter, setOverviewDateFilter] = useState<OverviewDateFilter>('all');
+  const [overviewMethodFilter, setOverviewMethodFilter] = useState<OverviewMethodFilter>('all');
+
+  const currentDraft = drafts.find((d) => d.id === activeDraftId) || drafts[0];
+  const orderItems = currentDraft?.items || [];
+  const paymentMethod = currentDraft?.paymentMethod || 'card';
 
   const filteredProducts = useMemo(() => {
     const byCategory =
@@ -97,29 +121,42 @@ const FestivePOS = () => {
     return byCategory.filter((p) => p.name.toLowerCase().includes(q));
   }, [selectedCategory, productQuery]);
 
+  const updateDraft = (updater: (draft: DraftOrder) => DraftOrder) => {
+    setDrafts((prev) => prev.map((d) => (d.id === activeDraftId ? updater(d) : d)));
+  };
+
   const addProduct = (product: Product) => {
-    setOrderItems((prev) => {
-      const existing = prev.find((item) => item.id === product.id);
+    if (!currentDraft) return;
+    updateDraft((draft) => {
+      const existing = draft.items.find((item) => item.id === product.id);
       if (existing) {
-        return prev.map((item) =>
-          item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item,
-        );
+        return {
+          ...draft,
+          items: draft.items.map((item) =>
+            item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item,
+          ),
+        };
       }
-      return [
-        ...prev,
-        { id: product.id, name: product.name, price: product.price, emoji: product.emoji, quantity: 1 },
-      ];
+      return {
+        ...draft,
+        items: [
+          ...draft.items,
+          { id: product.id, name: product.name, price: product.price, emoji: product.emoji, quantity: 1 },
+        ],
+      };
     });
   };
 
   const updateQuantity = (id: string, delta: number) => {
-    setOrderItems((prev) =>
-      prev
+    if (!currentDraft) return;
+    updateDraft((draft) => ({
+      ...draft,
+      items: draft.items
         .map((item) =>
           item.id === id ? { ...item, quantity: Math.max(0, item.quantity + delta) } : item,
         )
         .filter((item) => item.quantity > 0),
-    );
+    }));
   };
 
   const subtotal = useMemo(
@@ -128,6 +165,36 @@ const FestivePOS = () => {
   );
   const tax = 0;
   const total = subtotal;
+
+  const changePaymentMethod = (method: PaymentMethod) => {
+    if (!currentDraft) return;
+    updateDraft((draft) => ({ ...draft, paymentMethod: method }));
+  };
+
+  const addDraft = () => {
+    const nextNumber = drafts.length + 1;
+    const newId = `${Date.now()}`;
+    setDrafts((prev) => [...prev, { id: newId, label: `Pedido ${nextNumber}`, items: [], paymentMethod: 'card' }]);
+    setActiveDraftId(newId);
+  };
+
+  const clearDraft = () => {
+    if (!currentDraft) return;
+    updateDraft((draft) => ({ ...draft, items: [] }));
+  };
+
+  const deleteDraft = () => {
+    if (!currentDraft) return;
+    setDrafts((prev) => {
+      if (prev.length <= 1) {
+        return prev.map((d) => (d.id === currentDraft.id ? { ...d, items: [] } : d));
+      }
+      const remaining = prev.filter((d) => d.id !== currentDraft.id);
+      const nextId = remaining[0]?.id ?? prev[0].id;
+      setActiveDraftId(nextId);
+      return remaining;
+    });
+  };
 
   const confirmOrder = async (): Promise<boolean> => {
     if (!orderItems.length || savingOrder) return false;
@@ -142,15 +209,17 @@ const FestivePOS = () => {
         : summaryNote || null;
 
     try {
-      const { error } = await supabase.from('sales').insert({
-        payment_method: paymentMethod,
-        total_amount: total,
-        notes,
-      });
+      const { error } = await supabase
+        .from('sales')
+        .insert({
+          payment_method: paymentMethod,
+          total_amount: total,
+          notes,
+        });
 
       if (error) throw error;
 
-      setOrderItems([]);
+      updateDraft((draft) => ({ ...draft, items: [] }));
       return true;
     } catch (err: any) {
       setOrderError(err.message ?? 'No se pudo confirmar la venta.');
@@ -163,7 +232,7 @@ const FestivePOS = () => {
   useEffect(() => {
     if (activeNav !== 'overview') return;
     loadOverviewSales();
-  }, [activeNav]);
+  }, [activeNav, overviewDateFilter, overviewMethodFilter]);
 
   useEffect(() => {
     if (activeNav !== 'closing') return;
@@ -175,14 +244,43 @@ const FestivePOS = () => {
     loadPendingSales();
   }, [activeNav, pendingFilter]);
 
+  const calcRange = (filter: OverviewDateFilter) => {
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    if (filter === 'yesterday') {
+      start.setDate(start.getDate() - 1);
+    }
+    if (filter === 'last7') {
+      start.setDate(start.getDate() - 6);
+    }
+    const end = new Date(start);
+    if (filter === 'today' || filter === 'yesterday') {
+      end.setDate(start.getDate() + 1);
+    } else {
+      end.setHours(23, 59, 59, 999);
+    }
+    return { from: start.toISOString(), to: end.toISOString() };
+  };
+
   const loadOverviewSales = async () => {
     setLoadingOverview(true);
     setOverviewError(null);
     try {
-      const { data, error } = await supabase
+      const query = supabase
         .from('sales')
         .select('id, created_at, total_amount, payment_method, notes')
         .order('created_at', { ascending: false });
+
+      if (overviewDateFilter !== 'all') {
+        const { from, to } = calcRange(overviewDateFilter);
+        query.gte('created_at', from).lte('created_at', to);
+      }
+
+      if (overviewMethodFilter !== 'all') {
+        query.eq('payment_method', overviewMethodFilter === 'pending' ? 'pending' : overviewMethodFilter);
+      }
+
+      const { data, error } = await query;
       if (error) throw error;
       setOverviewSales(data || []);
     } catch (err: any) {
@@ -217,9 +315,19 @@ const FestivePOS = () => {
     }
   };
 
-  const markPendingAsPaid = async (saleId: number, method: PaymentMethod) => {
+  const markPendingAsPaid = async (saleId: number, method: PaymentMethod, note?: string) => {
     setPendingError(null);
-    const { error } = await supabase.from('sales').update({ payment_method: method }).eq('id', saleId);
+    const current = pendingSales.find((s) => s.id === saleId);
+    const cleanedNotes =
+      note?.trim() ||
+      current?.notes?.replace(/^PENDIENTE\s*-\s*/i, '').trim() ||
+      current?.notes?.trim() ||
+      null;
+
+    const { error } = await supabase
+      .from('sales')
+      .update({ payment_method: method, notes: cleanedNotes })
+      .eq('id', saleId);
     if (error) {
       setPendingError(error.message ?? 'No se pudo actualizar el pedido.');
       return;
@@ -227,6 +335,7 @@ const FestivePOS = () => {
     await loadPendingSales();
     if (activeNav === 'overview') loadOverviewSales();
     if (activeNav === 'closing') loadClosingSales();
+    if (selectedPendingId === saleId) setSelectedPendingId(null);
   };
 
   const loadClosingSales = async () => {
@@ -288,15 +397,19 @@ const FestivePOS = () => {
     return closingSales.slice(start, start + closingPageSize);
   }, [closingSales, closingPage]);
 
+  const openPendingModal = (sale: SaleRow) => {
+    const cleaned = sale.notes?.replace(/^PENDIENTE\s*-\s*/i, '').trim() || sale.notes || '';
+    setPendingModalSale(sale);
+    setPendingModalMethod('cash');
+    setPendingModalNote(cleaned);
+  };
+
   const pendingContent = (
     <div className="space-y-5">
       <div className="bg-card border border-borderSoft rounded-2xl p-5 shadow-soft space-y-4">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
             <div className="text-lg font-semibold">Pedidos pendientes</div>
-            <div className="text-xs text-textSoft">
-              {loadingPending ? 'Cargando...' : `${pendingSales.length} registro(s)`}
-            </div>
           </div>
           <div className="flex items-center gap-2 text-sm">
             <select
@@ -328,12 +441,17 @@ const FestivePOS = () => {
                 <th className="py-2 pr-4">Monto</th>
                 <th className="py-2 pr-4">Método</th>
                 <th className="py-2 pr-4">Notas</th>
-                <th className="py-2 pr-4">Acción</th>
               </tr>
             </thead>
             <tbody>
               {pendingSales.map((s) => (
-                <tr key={s.id} className="border-t border-borderSoft/70">
+                <tr
+                  key={s.id}
+                  className={`border-t border-borderSoft/70 cursor-pointer transition ${
+                    selectedPendingId === s.id ? 'bg-accent/10 border-accent/40' : ''
+                  }`}
+                  onClick={() => setSelectedPendingId((prev) => (prev === s.id ? null : s.id))}
+                >
                   <td className="py-2 pr-4">
                     {new Date(s.created_at).toLocaleString('es-CL', {
                       day: '2-digit',
@@ -344,31 +462,124 @@ const FestivePOS = () => {
                   </td>
                   <td className="py-2 pr-4 font-semibold">${formatCLP(s.total_amount)}</td>
                   <td className="py-2 pr-4 uppercase text-xs">{getPaymentLabel(s.payment_method)}</td>
-                  <td className="py-2 pr-4 text-textSoft">{s.notes || '—'}</td>
-                  <td className="py-2 pr-4">
-                    <div className="flex gap-2">
-                      {(['cash', 'card', 'transfer'] as const).map((method) => (
-                        <button
-                          key={method}
-                          onClick={() => markPendingAsPaid(s.id, method)}
-                          className="h-8 px-3 rounded-lg border border-borderSoft bg-panel hover:border-accent/40 text-xs font-semibold transition"
-                        >
-                          {getPaymentLabel(method)}
-                        </button>
-                      ))}
-                    </div>
-                  </td>
+                  <td className="py-2 pr-4 text-textSoft">{s.notes || '-'}</td>
                 </tr>
               ))}
               {!pendingSales.length && !loadingPending && (
                 <tr>
-                  <td className="py-4 text-xs text-textSoft" colSpan={5}>
+                  <td className="py-4 text-xs text-textSoft" colSpan={4}>
                     No hay pedidos pendientes.
                   </td>
                 </tr>
               )}
             </tbody>
           </table>
+        </div>
+
+        {selectedPendingId && (
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between rounded-xl bg-panel border border-borderSoft px-4 py-3 shadow-soft">
+            <div className="text-sm text-textSoft">Pedido seleccionado: #{selectedPendingId}</div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setSelectedPendingId(null)}
+                className="h-10 px-4 rounded-lg border border-borderSoft text-sm text-text hover:border-accent/40 transition"
+              >
+                Limpiar
+              </button>
+              <button
+                onClick={() => {
+                  const sale = pendingSales.find((s) => s.id === selectedPendingId);
+                  if (!sale) return;
+                  openPendingModal(sale);
+                }}
+                className="h-10 px-4 rounded-lg bg-accent text-panel text-sm font-semibold shadow-soft hover:shadow-card transition"
+              >
+                Cobrar seleccionado
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  const pendingModal = pendingModalSale && (
+    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center px-4">
+      <div className="bg-card border border-borderSoft rounded-2xl shadow-card max-w-lg w-full p-5 space-y-4">
+        <div className="flex items-start justify-between">
+          <div>
+            <div className="text-xs text-textSoft uppercase tracking-[0.16em]">Cobrar pedido</div>
+            <div className="text-lg font-semibold">#{pendingModalSale.id}</div>
+            <div className="text-sm text-textSoft mt-1">
+              {new Date(pendingModalSale.created_at).toLocaleString('es-CL', {
+                day: '2-digit',
+                month: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+              })}
+            </div>
+          </div>
+          <button
+            onClick={() => setPendingModalSale(null)}
+            className="w-9 h-9 rounded-full border border-borderSoft text-textSoft hover:text-text"
+          >
+            ×
+          </button>
+        </div>
+
+        <div className="space-y-2">
+          <div className="text-sm font-semibold">Método de pago</div>
+          <div className="grid grid-cols-3 gap-2">
+            {(['cash', 'card', 'transfer'] as const).map((method) => {
+              const active = pendingModalMethod === method;
+              return (
+                <button
+                  key={method}
+                  onClick={() => setPendingModalMethod(method)}
+                  className={`h-10 rounded-lg border text-sm transition ${
+                    active
+                      ? 'bg-accent text-panel font-semibold border-transparent shadow-soft'
+                      : 'bg-panelAlt border-borderSoft text-textSoft hover:border-accent/40'
+                  }`}
+                  aria-pressed={active}
+                >
+                  {getPaymentLabel(method)}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <div className="text-sm font-semibold">Nota</div>
+          <textarea
+            value={pendingModalNote}
+            onChange={(e) => setPendingModalNote(e.target.value)}
+            rows={3}
+            className="w-full rounded-lg border border-borderSoft bg-panelAlt text-sm text-text px-3 py-2 focus:outline-none focus:ring-2 focus:ring-accent/30 resize-none"
+            placeholder="Detalle opcional"
+          />
+        </div>
+
+        {pendingError && <div className="text-sm text-accent">{pendingError}</div>}
+
+        <div className="flex gap-3 justify-end">
+          <button
+            onClick={() => setPendingModalSale(null)}
+            className="h-10 px-4 rounded-lg border border-borderSoft text-sm text-text hover:border-accent/40 transition"
+          >
+            Cancelar
+          </button>
+          <button
+            onClick={async () => {
+              if (!pendingModalSale) return;
+              await markPendingAsPaid(pendingModalSale.id, pendingModalMethod, pendingModalNote);
+              setPendingModalSale(null);
+            }}
+            className="h-10 px-4 rounded-lg bg-accent text-panel text-sm font-semibold shadow-soft hover:shadow-card transition"
+          >
+            Confirmar pago
+          </button>
         </div>
       </div>
     </div>
@@ -419,6 +630,44 @@ const FestivePOS = () => {
         </div>
       </div>
 
+      <div className="bg-card border border-borderSoft rounded-2xl px-5 py-4 shadow-card flex flex-wrap items-center gap-2">
+        <div className="text-sm font-semibold mr-2">Pedidos en curso</div>
+        {drafts.map((draft) => {
+          const active = draft.id === activeDraftId;
+          return (
+            <button
+              key={draft.id}
+              onClick={() => setActiveDraftId(draft.id)}
+              className={`h-9 px-3 rounded-full text-sm border transition ${
+                active
+                  ? 'bg-accent/80 text-panel font-semibold border-transparent shadow-soft'
+                  : 'bg-panelAlt text-textSoft border-borderSoft hover:text-text hover:border-accent/30'
+              }`}
+            >
+              {draft.label}
+            </button>
+          );
+        })}
+        <button
+          onClick={addDraft}
+          className="h-9 px-3 rounded-full text-sm border border-borderSoft text-text hover:border-accent/40 transition"
+        >
+          + Nuevo
+        </button>
+        <button
+          onClick={clearDraft}
+          className="h-9 px-3 rounded-full text-sm border border-borderSoft text-text hover:border-accent/40 transition"
+        >
+          Vaciar
+        </button>
+        <button
+          onClick={deleteDraft}
+          className="h-9 px-3 rounded-full text-sm border border-borderSoft text-text hover:border-accent/40 transition"
+        >
+          Eliminar
+        </button>
+      </div>
+
       <div className="grid xl:grid-cols-[1fr_340px] gap-8 items-start">
         <div className="bg-panel border border-borderSoft rounded-2xl p-6 shadow-soft space-y-6">
           <div className="flex items-center justify-between">
@@ -446,7 +695,8 @@ const FestivePOS = () => {
             paymentMethod={paymentMethod}
             saving={savingOrder}
             error={orderError}
-            onPaymentChange={setPaymentMethod}
+            orderLabel={currentDraft?.label}
+            onPaymentChange={changePaymentMethod}
             onUpdateQuantity={updateQuantity}
             onConfirm={confirmOrder}
           />
@@ -475,19 +725,39 @@ const FestivePOS = () => {
       </div>
 
       <div className="bg-panel border border-borderSoft rounded-2xl p-5 shadow-soft space-y-4">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <div className="text-lg font-semibold">Todas las ventas</div>
-            <div className="text-xs text-textSoft">
-              {loadingOverview ? 'Cargando...' : `${overviewSales.length} registro(s)`}
-            </div>
           </div>
-          <button
-            onClick={loadOverviewSales}
-            className="h-9 px-3 rounded-full border border-borderSoft text-sm text-text hover:border-accent/40 transition"
-          >
-            Refrescar
-          </button>
+          <div className="flex flex-wrap gap-2 items-center text-sm">
+            <select
+              value={overviewDateFilter}
+              onChange={(e) => setOverviewDateFilter(e.target.value as OverviewDateFilter)}
+              className="h-10 rounded-lg border border-borderSoft bg-panelAlt px-3 text-sm text-text focus:outline-none focus:ring-2 focus:ring-accent/30"
+            >
+              <option value="today">Hoy</option>
+              <option value="yesterday">Ayer</option>
+              <option value="last7">Últimos 7</option>
+              <option value="all">Todas</option>
+            </select>
+            <select
+              value={overviewMethodFilter}
+              onChange={(e) => setOverviewMethodFilter(e.target.value as OverviewMethodFilter)}
+              className="h-10 rounded-lg border border-borderSoft bg-panelAlt px-3 text-sm text-text focus:outline-none focus:ring-2 focus:ring-accent/30"
+            >
+              <option value="all">Método: todos</option>
+              <option value="cash">Efectivo</option>
+              <option value="card">Tarjeta</option>
+              <option value="transfer">Transferencia</option>
+              <option value="pending">Pendiente</option>
+            </select>
+            <button
+              onClick={loadOverviewSales}
+              className="h-10 px-3 rounded-lg border border-borderSoft text-sm text-text hover:border-accent/40 transition"
+            >
+              Refrescar
+            </button>
+          </div>
         </div>
         {overviewError && <div className="text-sm text-accent">{overviewError}</div>}
         <div className="overflow-x-auto">
@@ -545,17 +815,14 @@ const FestivePOS = () => {
 
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6 items-start">
         <div className="bg-panel border border-borderSoft rounded-2xl p-5 shadow-soft space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="text-lg font-semibold">Ventas del dia</div>
-              <div className="text-xs text-textSoft">
-                {loadingClosing ? 'Cargando...' : `${closingSales.length} registro(s)`}
-              </div>
-            </div>
-            <button
-              onClick={loadClosingSales}
-              className="h-9 px-3 rounded-full border border-borderSoft text-sm text-text hover:border-accent/40 transition"
-            >
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-lg font-semibold">Ventas del dia</div>
+          </div>
+          <button
+            onClick={loadClosingSales}
+            className="h-9 px-3 rounded-full border border-borderSoft text-sm text-text hover:border-accent/40 transition"
+          >
               Refrescar
             </button>
           </div>
@@ -660,12 +927,32 @@ const FestivePOS = () => {
               </span>
             </div>
           </div>
-          <button
-            className="w-full h-11 rounded-xl bg-accent text-panel text-sm font-semibold shadow-soft hover:shadow-card transition"
-            onClick={() => setCashCounted('')}
-          >
-            Guardar cierre (local)
-          </button>
+          <textarea
+            value={closingNotes}
+            onChange={(e) => setClosingNotes(e.target.value)}
+            rows={2}
+            className="w-full rounded-lg border border-borderSoft bg-panelAlt text-sm text-text px-3 py-2 focus:outline-none focus:ring-2 focus:ring-accent/30 resize-none"
+            placeholder="Notas del cierre (opcional)"
+          />
+          <div className="flex gap-2">
+            <button
+              className="flex-1 h-11 rounded-xl border border-borderSoft text-sm font-semibold hover:border-accent/40 transition disabled:opacity-60 disabled:cursor-not-allowed"
+              onClick={() => {
+                setCashCounted('');
+                setClosingNotes('');
+              }}
+              disabled={savingClosing}
+            >
+              Limpiar
+            </button>
+            <button
+              className="flex-1 h-11 rounded-xl bg-accent text-panel text-sm font-semibold shadow-soft hover:shadow-card transition disabled:opacity-60 disabled:cursor-not-allowed"
+              onClick={saveClosing}
+              disabled={savingClosing}
+            >
+              {savingClosing ? 'Guardando...' : 'Guardar cierre'}
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -714,12 +1001,6 @@ const FestivePOS = () => {
           {activeNav === 'sales' && salesContent}
           {activeNav === 'closing' && closingContent}
           {activeNav === 'pending' && pendingContent}
-          {activeNav !== 'overview' && activeNav !== 'sales' && activeNav !== 'closing' && (
-            <div className="bg-panel border border-borderSoft rounded-2xl p-6 shadow-soft">
-              <div className="text-lg font-semibold mb-2">Proximamente</div>
-              <p className="text-textSoft text-sm">Esta seccion aun esta en construccion.</p>
-            </div>
-          )}
         </div>
       </div>
 
@@ -746,7 +1027,7 @@ const FestivePOS = () => {
                 <div className="flex items-center justify-between mb-3">
                   <div className="text-left">
                     <div className="text-xs text-sidebarMuted">Pedido actual</div>
-                    <div className="text-lg font-semibold">En curso</div>
+                    <div className="text-lg font-semibold">{currentDraft?.label}</div>
                   </div>
                   <button
                     onClick={() => setShowOrderMobile(false)}
@@ -764,13 +1045,14 @@ const FestivePOS = () => {
                     paymentMethod={paymentMethod}
                     saving={savingOrder}
                     error={orderError}
-                    onPaymentChange={setPaymentMethod}
+                    onPaymentChange={changePaymentMethod}
                     onUpdateQuantity={updateQuantity}
                     onConfirm={async () => {
                       const success = await confirmOrder();
                       if (success) setShowOrderMobile(false);
                       return success;
                     }}
+                    orderLabel={currentDraft?.label}
                   />
                 </div>
               </div>
@@ -779,9 +1061,40 @@ const FestivePOS = () => {
         </>
       )}
 
+      {pendingModal}
+
       <MobileNav active={activeNav} onNavigate={setActiveNav} />
     </div>
   );
+
+  async function saveClosing() {
+    if (savingClosing) return;
+    setSavingClosing(true);
+    setClosingError(null);
+    try {
+      const payload = {
+        closed_at: new Date().toISOString(),
+        total_sales: closingTotal,
+        cash_expected: cashExpected,
+        cash_counted: cashCountedNumber,
+        cash_diff: cashDiff,
+        card_total: closingTotals.card || 0,
+        transfer_total: closingTotals.transfer || 0,
+        pending_total: closingTotals.pending || 0,
+        notes: closingNotes || null,
+      };
+      const { error } = await supabase.from('cash_closings').insert(payload);
+      if (error) throw error;
+      setCashCounted('');
+      setClosingNotes('');
+      await loadClosingSales();
+      if (activeNav === 'overview') loadOverviewSales();
+    } catch (err: any) {
+      setClosingError(err.message ?? 'No se pudo guardar el cierre.');
+    } finally {
+      setSavingClosing(false);
+    }
+  }
 };
 
 export default FestivePOS;
