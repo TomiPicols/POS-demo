@@ -4,6 +4,7 @@ type Product = {
   price: number;
   emoji: string;
   category: string;
+  stock?: number;
 };
 
 type ProductCardProps = {

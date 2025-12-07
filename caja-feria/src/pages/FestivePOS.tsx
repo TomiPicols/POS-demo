@@ -1,26 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+﻿import { useEffect, useMemo, useState } from 'react';
 import MobileNav from '../components/pos/MobileNav';
 import OrderPanel, { type OrderItem, type PaymentMethod } from '../components/pos/OrderPanel';
 import ProductCard, { type Product } from '../components/pos/ProductCard';
 import Sidebar from '../components/pos/Sidebar';
 import { supabase } from '../lib/supabaseClient';
-
-const products: Product[] = [
-  { id: '1', name: 'Luces LED blancas 10 m', price: 8990, emoji: '\u{1F4A1}', category: 'Luces' },
-  { id: '2', name: 'Guirnalda navidena verde', price: 6990, emoji: '\u{1F33F}', category: 'Decoracion' },
-  { id: '3', name: 'Esferas doradas x6', price: 4990, emoji: '\u{1F7E1}', category: 'Esferas' },
-  { id: '4', name: 'Luces cascada 3 m', price: 12990, emoji: '\u2728', category: 'Luces' },
-  { id: '5', name: 'Esferas plateadas x6', price: 4990, emoji: '\u26AA', category: 'Esferas' },
-  { id: '6', name: 'Guirnalda con luces', price: 14990, emoji: '\u{1F380}', category: 'Decoracion' },
-  { id: '7', name: 'Luces multicolor 5 m', price: 7490, emoji: '\u{1F308}', category: 'Luces' },
-  { id: '8', name: 'Estrella para arbol', price: 9990, emoji: '\u2B50', category: 'Decoracion' },
-  { id: '9', name: 'Cojin renos', price: 7990, emoji: '\u{1F98C}', category: 'Textiles' },
-  { id: '10', name: 'Vela canela', price: 5990, emoji: '\u{1F56F}', category: 'Aromas' },
-  { id: '11', name: 'Muneco de nieve', price: 8990, emoji: '\u26C4', category: 'Figuras' },
-  { id: '12', name: 'Set calcetines 4u', price: 6990, emoji: '\u{1F9E6}', category: 'Textiles' },
-];
-
-const categories = ['Todo', 'Luces', 'Decoracion', 'Esferas', 'Textiles', 'Figuras', 'Aromas'] as const;
 
 type SaleRow = {
   id: number;
@@ -55,6 +38,17 @@ const getPaymentLabel = (method: string) => {
   return paymentMethodDisplay[key] ?? method;
 };
 
+const categoryEmoji = (category: string) => {
+  const cat = category.toLowerCase();
+  if (cat.includes('cascad')) return '\u2728';
+  if (cat.includes('led')) return '\u{1F4A1}';
+  if (cat.includes('solar')) return '\u{1F31E}';
+  if (cat.includes('cena')) return '\u2B50';
+  if (cat.includes('mang')) return '\u{1F9F2}';
+  if (cat.includes('otro')) return '\u{1F381}';
+  return '\u{1F384}';
+};
+
 const todayRange = () => {
   const start = new Date();
   start.setHours(0, 0, 0, 0);
@@ -77,8 +71,9 @@ type OverviewMethodFilter = PaymentMethod | 'all' | 'pending';
 
 const FestivePOS = () => {
   const [activeNav, setActiveNav] = useState('sales');
+  const [products, setProducts] = useState<Product[]>([]);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [selectedCategory, setSelectedCategory] = useState<(typeof categories)[number]>('Todo');
+  const [selectedCategory, setSelectedCategory] = useState('Todo');
   const [drafts, setDrafts] = useState<DraftOrder[]>([
     { id: '1', label: 'Pedido 1', items: [], paymentMethod: 'card' },
   ]);
@@ -100,6 +95,9 @@ const FestivePOS = () => {
   const [loadingPending, setLoadingPending] = useState(false);
   const [pendingError, setPendingError] = useState<string | null>(null);
   const [pendingFilter, setPendingFilter] = useState<PaymentMethod | 'all'>('all');
+  const [pendingDateFilter, setPendingDateFilter] = useState<'today' | '7d' | '30d' | 'all'>('today');
+  const [pendingSearch, setPendingSearch] = useState('');
+  const [pendingInfo, setPendingInfo] = useState<string | null>(null);
   const [selectedPendingId, setSelectedPendingId] = useState<number | null>(null);
   const [pendingModalSale, setPendingModalSale] = useState<SaleRow | null>(null);
   const [pendingModalMethod, setPendingModalMethod] = useState<PaymentMethod>('cash');
@@ -119,7 +117,13 @@ const FestivePOS = () => {
     const q = productQuery.trim().toLowerCase();
     if (!q) return byCategory;
     return byCategory.filter((p) => p.name.toLowerCase().includes(q));
-  }, [selectedCategory, productQuery]);
+  }, [selectedCategory, productQuery, products]);
+
+  const categoryOptions = useMemo(() => {
+    const set = new Set<string>();
+    products.forEach((p) => set.add(p.category || 'Otros'));
+    return ['Todo', ...Array.from(set)];
+  }, [products]);
 
   const updateDraft = (updater: (draft: DraftOrder) => DraftOrder) => {
     setDrafts((prev) => prev.map((d) => (d.id === activeDraftId ? updater(d) : d)));
@@ -196,8 +200,14 @@ const FestivePOS = () => {
     });
   };
 
-  const confirmOrder = async (): Promise<boolean> => {
+              const confirmOrder = async (): Promise<boolean> => {
     if (!orderItems.length || savingOrder) return false;
+
+    const invalidProduct = orderItems.some((item) => Number.isNaN(Number.parseInt(item.id, 10)));
+    if (invalidProduct) {
+      setOrderError('Productos inválidos en el pedido.');
+      return false;
+    }
 
     setSavingOrder(true);
     setOrderError(null);
@@ -209,17 +219,36 @@ const FestivePOS = () => {
         : summaryNote || null;
 
     try {
-      const { error } = await supabase
+      const { data: sale, error: saleError } = await supabase
         .from('sales')
         .insert({
           payment_method: paymentMethod,
           total_amount: total,
           notes,
-        });
+        })
+        .select('id')
+        .single();
 
-      if (error) throw error;
+      if (saleError || !sale) throw saleError;
+
+      const saleItemsPayload = orderItems.map((item) => ({
+        sale_id: sale.id,
+        product_id: Number.parseInt(item.id, 10),
+        quantity: item.quantity,
+        unit_price: item.price,
+        total_price: item.price * item.quantity,
+      }));
+
+      const { error: itemsError } = await supabase.from('sale_items').insert(saleItemsPayload);
+      if (itemsError) {
+        await supabase.from('sales').delete().eq('id', sale.id);
+        throw itemsError;
+      }
 
       updateDraft((draft) => ({ ...draft, items: [] }));
+      if (activeNav === 'overview') loadOverviewSales();
+      if (activeNav === 'closing') loadClosingSales();
+      if (activeNav === 'pending') loadPendingSales();
       return true;
     } catch (err: any) {
       setOrderError(err.message ?? 'No se pudo confirmar la venta.');
@@ -228,11 +257,14 @@ const FestivePOS = () => {
       setSavingOrder(false);
     }
   };
-
-  useEffect(() => {
+useEffect(() => {
     if (activeNav !== 'overview') return;
     loadOverviewSales();
   }, [activeNav, overviewDateFilter, overviewMethodFilter]);
+
+  useEffect(() => {
+    loadProducts();
+  }, []);
 
   useEffect(() => {
     if (activeNav !== 'closing') return;
@@ -242,7 +274,7 @@ const FestivePOS = () => {
   useEffect(() => {
     if (activeNav !== 'pending') return;
     loadPendingSales();
-  }, [activeNav, pendingFilter]);
+  }, [activeNav, pendingFilter, pendingDateFilter, pendingSearch]);
 
   const calcRange = (filter: OverviewDateFilter) => {
     const start = new Date();
@@ -290,19 +322,80 @@ const FestivePOS = () => {
     }
   };
 
+  const loadProducts = async () => {
+    const mapProducts = (rows: any[] | null): Product[] =>
+      rows?.map((p) => ({
+        id: String(p.id),
+        name: p.name ?? 'Producto',
+        price: Number(p.default_price) || 0,
+        category: p.category || 'Otros',
+        emoji: categoryEmoji(p.category || ''),
+        stock: typeof p.stock === 'number' ? p.stock : Number(p.stock || 0),
+      })) || [];
+
+    try {
+      const { data, error } = await supabase
+        .from('products')
+        .select('id, name, default_price, category, is_active, stock')
+        .eq('is_active', true)
+        .order('name');
+      if (error) throw error;
+      setProducts(mapProducts(data));
+    } catch (err: any) {
+      const message = err?.message?.toLowerCase?.() || '';
+      if (message.includes('stock') && message.includes('column')) {
+        console.warn('La columna stock no existe en Supabase. Se usan valores 0 hasta que la crees.');
+        try {
+          const { data, error: fallbackError } = await supabase
+            .from('products')
+            .select('id, name, default_price, category, is_active')
+            .eq('is_active', true)
+            .order('name');
+          if (fallbackError) throw fallbackError;
+          setProducts(mapProducts(data));
+        } catch (fallbackErr: any) {
+          console.error('No se pudieron cargar los productos (respaldo sin stock).', fallbackErr);
+        }
+      } else {
+        console.error('No se pudieron cargar los productos.', err);
+      }
+    }
+  };
+
   const loadPendingSales = async () => {
     setLoadingPending(true);
     setPendingError(null);
+    setPendingInfo(null);
     try {
       const query = supabase
         .from('sales')
         .select('id, created_at, total_amount, payment_method, notes')
         .order('created_at', { ascending: false });
 
+      const now = new Date();
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
+      if (pendingDateFilter === 'today') {
+        query.gte('created_at', todayStart.toISOString()).lte('created_at', now.toISOString());
+      } else if (pendingDateFilter === '7d') {
+        const from = new Date();
+        from.setDate(from.getDate() - 7);
+        query.gte('created_at', from.toISOString()).lte('created_at', now.toISOString());
+      } else if (pendingDateFilter === '30d') {
+        const from = new Date();
+        from.setDate(from.getDate() - 30);
+        query.gte('created_at', from.toISOString()).lte('created_at', now.toISOString());
+      }
+
       if (pendingFilter !== 'all') {
         query.eq('payment_method', pendingFilter);
       } else {
         query.eq('payment_method', 'pending');
+      }
+
+      const search = pendingSearch.trim();
+      if (search) {
+        query.ilike('notes', `%${search}%`);
       }
 
       const { data, error } = await query;
@@ -317,6 +410,7 @@ const FestivePOS = () => {
 
   const markPendingAsPaid = async (saleId: number, method: PaymentMethod, note?: string) => {
     setPendingError(null);
+    setPendingInfo(null);
     const current = pendingSales.find((s) => s.id === saleId);
     const cleanedNotes =
       note?.trim() ||
@@ -332,6 +426,7 @@ const FestivePOS = () => {
       setPendingError(error.message ?? 'No se pudo actualizar el pedido.');
       return;
     }
+    setPendingInfo('Pedido marcado como pagado.');
     await loadPendingSales();
     if (activeNav === 'overview') loadOverviewSales();
     if (activeNav === 'closing') loadClosingSales();
@@ -410,8 +505,11 @@ const FestivePOS = () => {
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
             <div className="text-lg font-semibold">Pedidos pendientes</div>
+            <div className="text-xs text-textSoft">
+              {loadingPending ? 'Cargando...' : `${pendingSales.length} registro(s)`}
+            </div>
           </div>
-          <div className="flex items-center gap-2 text-sm">
+          <div className="flex flex-wrap items-center gap-2 text-sm">
             <select
               value={pendingFilter}
               onChange={(e) => setPendingFilter(e.target.value as PaymentMethod | 'all')}
@@ -423,6 +521,22 @@ const FestivePOS = () => {
               <option value="transfer">Transferencia</option>
               <option value="pending">Pendiente</option>
             </select>
+            <select
+              value={pendingDateFilter}
+              onChange={(e) => setPendingDateFilter(e.target.value as 'today' | '7d' | '30d' | 'all')}
+              className="h-10 rounded-lg border border-borderSoft bg-panel px-3 text-sm text-text focus:outline-none focus:ring-2 focus:ring-accent/30"
+            >
+              <option value="today">Hoy</option>
+              <option value="7d">Últimos 7 días</option>
+              <option value="30d">Últimos 30 días</option>
+              <option value="all">Todo</option>
+            </select>
+            <input
+              value={pendingSearch}
+              onChange={(e) => setPendingSearch(e.target.value)}
+              placeholder="Buscar en notas..."
+              className="h-10 w-44 rounded-lg border border-borderSoft bg-panel px-3 text-sm text-text focus:outline-none focus:ring-2 focus:ring-accent/30"
+            />
             <button
               onClick={loadPendingSales}
               className="h-10 px-3 rounded-lg border border-borderSoft text-sm text-text hover:border-accent/40 transition"
@@ -431,6 +545,38 @@ const FestivePOS = () => {
             </button>
           </div>
         </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+          <div className="rounded-xl border border-borderSoft bg-panel px-4 py-3 shadow-soft space-y-1">
+            <div className="text-[11px] uppercase tracking-[0.14em] text-textSoft">Pendientes</div>
+            <div className="text-lg font-semibold">{pendingSales.length}</div>
+          </div>
+          <div className="rounded-xl border border-borderSoft bg-panel px-4 py-3 shadow-soft space-y-1">
+            <div className="text-[11px] uppercase tracking-[0.14em] text-textSoft">Total pendiente</div>
+            <div className="text-lg font-semibold text-highlight">
+              $
+              {formatCLP(pendingSales.reduce((acc, s) => acc + s.total_amount, 0))}
+            </div>
+          </div>
+          <div className="rounded-xl border border-borderSoft bg-panel px-4 py-3 shadow-soft space-y-1">
+            <div className="text-[11px] uppercase tracking-[0.14em] text-textSoft">Filtro</div>
+            <div className="text-sm font-medium text-textSoft capitalize">
+              {pendingDateFilter === 'today'
+                ? 'Hoy'
+                : pendingDateFilter === '7d'
+                  ? 'Últimos 7 días'
+                  : pendingDateFilter === '30d'
+                    ? 'Últimos 30 días'
+                    : 'Todo'}
+            </div>
+          </div>
+        </div>
+
+        {pendingInfo && (
+          <div className="text-sm text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
+            {pendingInfo}
+          </div>
+        )}
         {pendingError && <div className="text-sm text-accent">{pendingError}</div>}
 
         <div className="overflow-x-auto">
@@ -441,6 +587,7 @@ const FestivePOS = () => {
                 <th className="py-2 pr-4">Monto</th>
                 <th className="py-2 pr-4">Método</th>
                 <th className="py-2 pr-4">Notas</th>
+                <th className="py-2 pr-4">Acción</th>
               </tr>
             </thead>
             <tbody>
@@ -463,11 +610,21 @@ const FestivePOS = () => {
                   <td className="py-2 pr-4 font-semibold">${formatCLP(s.total_amount)}</td>
                   <td className="py-2 pr-4 uppercase text-xs">{getPaymentLabel(s.payment_method)}</td>
                   <td className="py-2 pr-4 text-textSoft">{s.notes || '-'}</td>
+                  <td className="py-2 pr-4">
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => openPendingModal(s)}
+                        className="h-8 px-3 rounded-lg border border-borderSoft bg-panel hover:border-accent/40 text-xs font-semibold transition"
+                      >
+                        Cobrar
+                      </button>
+                    </div>
+                  </td>
                 </tr>
               ))}
               {!pendingSales.length && !loadingPending && (
                 <tr>
-                  <td className="py-4 text-xs text-textSoft" colSpan={4}>
+                  <td className="py-4 text-xs text-textSoft" colSpan={5}>
                     No hay pedidos pendientes.
                   </td>
                 </tr>
@@ -602,7 +759,7 @@ const FestivePOS = () => {
     <div className="space-y-8">
       <div className="bg-card border border-borderSoft rounded-2xl px-5 py-4 shadow-card flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div className="flex flex-wrap gap-2">
-          {categories.map((cat) => {
+          {categoryOptions.map((cat) => {
             const active = cat === selectedCategory;
             return (
               <button
@@ -1098,6 +1255,8 @@ const FestivePOS = () => {
 };
 
 export default FestivePOS;
+
+
 
 
 
