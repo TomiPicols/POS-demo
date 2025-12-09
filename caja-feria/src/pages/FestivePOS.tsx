@@ -294,6 +294,9 @@ const FestivePOS = () => {
           payment_method: method,
           total_amount: itemsToSave.reduce((acc, i) => acc + i.price * i.quantity, 0),
           notes: note,
+          paid_at: method === 'pending' ? null : new Date().toISOString(),
+          paid_by: method === 'pending' ? null : (await supabase.auth.getUser()).data.user?.id ?? null,
+          paid_method: method === 'pending' ? null : method,
         })
         .select('id')
         .single();
