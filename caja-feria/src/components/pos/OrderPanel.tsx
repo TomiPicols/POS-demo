@@ -46,7 +46,7 @@ const OrderPanel = ({
     saving ? 'Guardando...' : paymentMethod === 'pending' ? 'Guardar pendiente' : 'Confirmar pedido';
 
   return (
-    <aside className="bg-card text-text rounded-2xl p-5 border border-borderSoft shadow-soft h-fit space-y-5">
+    <aside className="bg-card text-text rounded-2xl p-5 border border-borderSoft shadow-soft h-fit space-y-5 sticky top-4">
       <div className="flex items-center justify-between">
         <div>
           <div className="text-xs text-sidebarMuted">Pedido actual</div>
@@ -58,9 +58,6 @@ const OrderPanel = ({
       </div>
 
       <div className="space-y-3 max-h-72 overflow-auto pr-1">
-        {items.length === 0 && (
-          <div className="text-xs text-sidebarMuted">Agrega productos al pedido.</div>
-        )}
         {items.map((item) => (
           <div
             key={item.id}
@@ -98,7 +95,7 @@ const OrderPanel = ({
 
       <div className="space-y-2">
         <div className="text-xs text-sidebarMuted">Pago</div>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        <div className="grid grid-cols-2 gap-2">
           {(Object.keys(paymentLabels) as PaymentMethod[]).map((method) => {
             const active = paymentMethod === method;
             return (

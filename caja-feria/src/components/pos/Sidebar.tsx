@@ -58,12 +58,13 @@ type SidebarProps = {
   collapsed?: boolean;
   onToggleCollapse?: () => void;
   onNavigate?: (key: string) => void;
+  onLogout?: () => void;
 };
 
-const Sidebar = ({ active, collapsed = false, onToggleCollapse, onNavigate }: SidebarProps) => {
+const Sidebar = ({ active, collapsed = false, onToggleCollapse, onNavigate, onLogout }: SidebarProps) => {
   return (
     <aside
-      className={`hidden xl:flex ${collapsed ? 'w-20' : 'w-64'} bg-white/85 backdrop-blur-xl text-sidebarText flex-col shadow-card border border-panelBorder/70 transition-all duration-200`}
+      className={`hidden xl:flex ${collapsed ? 'w-20' : 'w-64'} bg-white/85 backdrop-blur-xl text-sidebarText flex-col shadow-card border border-panelBorder/70 transition-all duration-200 sticky top-0 h-screen`}
     >
       <div className="px-4 py-4 border-b border-panelBorder/60 flex items-center justify-between">
         {!collapsed && <div className="text-[11px] uppercase tracking-[0.22em] text-sidebarMuted">Menú</div>}
@@ -75,7 +76,7 @@ const Sidebar = ({ active, collapsed = false, onToggleCollapse, onNavigate }: Si
           {collapsed ? '›' : '‹'}
         </button>
       </div>
-      <nav className="flex-1 px-3 py-5 space-y-2">
+      <nav className="flex-1 px-3 py-5 space-y-2 overflow-y-auto">
         {navItems.map((item) => {
           const isActive = item.key === active;
           return (
@@ -95,12 +96,18 @@ const Sidebar = ({ active, collapsed = false, onToggleCollapse, onNavigate }: Si
           );
         })}
       </nav>
-      {!collapsed && (
-        <div className="px-6 py-5 border-t border-panelBorder/60 text-xs text-sidebarMuted">
-          <div className="font-semibold text-sidebarText">Soporte</div>
-          <p className="mt-1">Ayuda · Legal · Contacto</p>
-        </div>
-      )}
+      <div className="px-4 py-4 border-t border-panelBorder/60">
+        <button
+          onClick={onLogout}
+          className={`w-full h-11 rounded-xl border text-sm font-semibold transition shadow-soft hover:shadow-card ${
+            collapsed
+              ? 'text-text bg-white/80'
+              : 'bg-accent text-white border-accent hover:border-accent/80 hover:bg-accent/95'
+          }`}
+        >
+          {collapsed ? '⎋' : 'Cerrar sesión'}
+        </button>
+      </div>
     </aside>
   );
 };

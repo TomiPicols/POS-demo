@@ -4,6 +4,7 @@ import OrderPanel, { type OrderItem, type PaymentMethod } from '../components/po
 import ProductCard, { type Product } from '../components/pos/ProductCard';
 import Sidebar from '../components/pos/Sidebar';
 import { supabase } from '../lib/supabaseClient';
+import SelectField from '../components/SelectField';
 
 type SaleRow = {
   id: number;
@@ -11,6 +12,9 @@ type SaleRow = {
   total_amount: number;
   payment_method: string;
   notes: string | null;
+  paid_at?: string | null;
+  paid_by?: string | null;
+  paid_method?: string | null;
 };
 
 type DraftOrder = {
@@ -36,6 +40,50 @@ const paymentMethodDisplay: Record<PaymentMethod | 'other', string> = {
 const getPaymentLabel = (method: string) => {
   const key = paymentMethods.includes(method as PaymentMethod) ? (method as PaymentMethod) : 'other';
   return paymentMethodDisplay[key] ?? method;
+};
+
+type OfflineOrder = {
+  id: string;
+  items: OrderItem[];
+  paymentMethod: PaymentMethod;
+  notes: string | null;
+  createdAt: string;
+};
+
+const OFFLINE_QUEUE_KEY = 'pos_offline_queue';
+
+const loadOfflineQueue = (): OfflineOrder[] => {
+  try {
+    const raw = localStorage.getItem(OFFLINE_QUEUE_KEY);
+    return raw ? (JSON.parse(raw) as OfflineOrder[]) : [];
+  } catch {
+    return [];
+  }
+};
+
+const persistOfflineQueue = (queue: OfflineOrder[]) => {
+  try {
+    localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(queue));
+  } catch (err) {
+    console.error('No se pudo guardar la cola offline', err);
+  }
+};
+
+const logError = (context: string, error: any) => {
+  console.error(`[${context}]`, error);
+  try {
+    const raw = localStorage.getItem('pos_error_logs');
+    const parsed = raw ? (JSON.parse(raw) as any[]) : [];
+    parsed.push({
+      context,
+      message: error?.message ?? String(error),
+      time: new Date().toISOString(),
+    });
+    if (parsed.length > 50) parsed.shift();
+    localStorage.setItem('pos_error_logs', JSON.stringify(parsed));
+  } catch {
+    // ignore if storage is not available
+  }
 };
 
 const categoryEmoji = (category: string) => {
@@ -104,6 +152,12 @@ const FestivePOS = () => {
   const [pendingModalNote, setPendingModalNote] = useState('');
   const [overviewDateFilter, setOverviewDateFilter] = useState<OverviewDateFilter>('all');
   const [overviewMethodFilter, setOverviewMethodFilter] = useState<OverviewMethodFilter>('all');
+  const [isOffline, setIsOffline] = useState(!navigator.onLine);
+  const [offlineQueue, setOfflineQueue] = useState<OfflineOrder[]>([]);
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    window.location.reload();
+  };
 
   const currentDraft = drafts.find((d) => d.id === activeDraftId) || drafts[0];
   const orderItems = currentDraft?.items || [];
@@ -131,15 +185,24 @@ const FestivePOS = () => {
 
   const addProduct = (product: Product) => {
     if (!currentDraft) return;
+    const stock = product.stock ?? Number.POSITIVE_INFINITY;
     updateDraft((draft) => {
       const existing = draft.items.find((item) => item.id === product.id);
       if (existing) {
+        if (existing.quantity + 1 > stock) {
+          setOrderError('Stock insuficiente para este producto.');
+          return draft;
+        }
         return {
           ...draft,
           items: draft.items.map((item) =>
             item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item,
           ),
         };
+      }
+      if (stock <= 0) {
+        setOrderError('Producto sin stock.');
+        return draft;
       }
       return {
         ...draft,
@@ -153,11 +216,13 @@ const FestivePOS = () => {
 
   const updateQuantity = (id: string, delta: number) => {
     if (!currentDraft) return;
+    const product = products.find((p) => p.id === id);
+    const stock = product?.stock ?? Number.POSITIVE_INFINITY;
     updateDraft((draft) => ({
       ...draft,
       items: draft.items
         .map((item) =>
-          item.id === id ? { ...item, quantity: Math.max(0, item.quantity + delta) } : item,
+          item.id === id ? { ...item, quantity: Math.max(0, Math.min(item.quantity + delta, stock)) } : item,
         )
         .filter((item) => item.quantity > 0),
     }));
@@ -169,7 +234,6 @@ const FestivePOS = () => {
   );
   const tax = 0;
   const total = subtotal;
-
   const changePaymentMethod = (method: PaymentMethod) => {
     if (!currentDraft) return;
     updateDraft((draft) => ({ ...draft, paymentMethod: method }));
@@ -180,11 +244,6 @@ const FestivePOS = () => {
     const newId = `${Date.now()}`;
     setDrafts((prev) => [...prev, { id: newId, label: `Pedido ${nextNumber}`, items: [], paymentMethod: 'card' }]);
     setActiveDraftId(newId);
-  };
-
-  const clearDraft = () => {
-    if (!currentDraft) return;
-    updateDraft((draft) => ({ ...draft, items: [] }));
   };
 
   const deleteDraft = () => {
@@ -200,38 +259,48 @@ const FestivePOS = () => {
     });
   };
 
-              const confirmOrder = async (): Promise<boolean> => {
-    if (!orderItems.length || savingOrder) return false;
+  const saveOrderOnline = async (
+    itemsToSave: OrderItem[],
+    method: PaymentMethod,
+    note: string | null,
+    opts?: { silent?: boolean },
+  ): Promise<boolean> => {
+    const silent = opts?.silent ?? false;
+    const ids = itemsToSave.map((i) => Number.parseInt(i.id, 10));
 
-    const invalidProduct = orderItems.some((item) => Number.isNaN(Number.parseInt(item.id, 10)));
-    if (invalidProduct) {
-      setOrderError('Productos inválidos en el pedido.');
+    try {
+      const { data: stockRows, error: stockError } = await supabase
+        .from('products')
+        .select('id, stock')
+        .in('id', ids);
+      if (stockError) throw stockError;
+      const stockMap = new Map<number, number>();
+      (stockRows || []).forEach((r: any) => stockMap.set(r.id, Number(r.stock ?? 0)));
+      const lacking = itemsToSave.filter((item) => (stockMap.get(Number(item.id)) ?? 0) < item.quantity);
+      if (lacking.length) {
+        if (!silent) setOrderError(`Stock insuficiente para: ${lacking.map((i) => i.name).join(', ')}`);
+        return false;
+      }
+    } catch (err: any) {
+      if (!silent) setOrderError(err?.message ?? 'No se pudo validar stock.');
+      logError('Validacion stock fallo', err);
       return false;
     }
-
-    setSavingOrder(true);
-    setOrderError(null);
-
-    const summaryNote = orderItems.map((item) => `${item.quantity}x ${item.name}`).join(' · ');
-    const notes =
-      paymentMethod === 'pending'
-        ? `PENDIENTE - ${summaryNote || 'Sin detalle'}`
-        : summaryNote || null;
 
     try {
       const { data: sale, error: saleError } = await supabase
         .from('sales')
         .insert({
-          payment_method: paymentMethod,
-          total_amount: total,
-          notes,
+          payment_method: method,
+          total_amount: itemsToSave.reduce((acc, i) => acc + i.price * i.quantity, 0),
+          notes: note,
         })
         .select('id')
         .single();
 
       if (saleError || !sale) throw saleError;
 
-      const saleItemsPayload = orderItems.map((item) => ({
+      const saleItemsPayload = itemsToSave.map((item) => ({
         sale_id: sale.id,
         product_id: Number.parseInt(item.id, 10),
         quantity: item.quantity,
@@ -245,19 +314,120 @@ const FestivePOS = () => {
         throw itemsError;
       }
 
-      updateDraft((draft) => ({ ...draft, items: [] }));
+      const stockUpdates = saleItemsPayload.map(async (item) => {
+        const { data: current } = await supabase
+          .from('products')
+          .select('stock')
+          .eq('id', item.product_id)
+          .single();
+        const currentStock = Number(current?.stock ?? 0);
+        const newStock = Math.max(0, currentStock - item.quantity);
+        const { error: updError } = await supabase.from('products').update({ stock: newStock }).eq('id', item.product_id);
+        if (updError) throw updError;
+      });
+
+      try {
+        await Promise.all(stockUpdates);
+      } catch (stockErr: any) {
+        if (!silent) {
+          setOrderError(
+            `Venta guardada pero no se pudo ajustar stock (requiere rol con permiso): ${stockErr?.message ?? ''}`,
+          );
+        }
+        logError('Fallo ajuste de stock', stockErr);
+      }
+
       if (activeNav === 'overview') loadOverviewSales();
       if (activeNav === 'closing') loadClosingSales();
       if (activeNav === 'pending') loadPendingSales();
       return true;
     } catch (err: any) {
-      setOrderError(err.message ?? 'No se pudo confirmar la venta.');
+      if (!silent) setOrderError(err.message ?? 'No se pudo confirmar la venta.');
+      logError('Error guardando venta', err);
+      return false;
+    }
+  };
+
+  const flushOfflineQueue = async () => {
+    if (!offlineQueue.length || !navigator.onLine) return;
+    const remaining: OfflineOrder[] = [];
+    let sent = 0;
+    for (const entry of offlineQueue) {
+      const ok = await saveOrderOnline(entry.items, entry.paymentMethod, entry.notes, { silent: true });
+      if (ok) {
+        sent += 1;
+      } else {
+        remaining.push(entry);
+      }
+    }
+    if (sent) {
+      if (activeNav === 'overview') loadOverviewSales();
+      if (activeNav === 'closing') loadClosingSales();
+      if (activeNav === 'pending') loadPendingSales();
+      setOrderError(`Se enviaron ${sent} pedido(s) pendientes al reconectar.`);
+    }
+    setOfflineQueue(remaining);
+  };
+
+  const confirmOrder = async (): Promise<boolean> => {
+    if (!orderItems.length || savingOrder) return false;
+
+    const invalidProduct = orderItems.some((item) => Number.isNaN(Number.parseInt(item.id, 10)));
+    if (invalidProduct) {
+      setOrderError('Productos invalidos en el pedido.');
+      return false;
+    }
+
+    setSavingOrder(true);
+    setOrderError(null);
+
+    const summaryNote = orderItems.map((item) => `${item.quantity}x ${item.name}`).join(' - ');
+    const notes =
+      paymentMethod === 'pending'
+        ? `PENDIENTE - ${summaryNote || 'Sin detalle'}`
+        : summaryNote || null;
+
+    try {
+      const success = await saveOrderOnline(orderItems, paymentMethod, notes);
+      if (success) {
+        updateDraft((draft) => ({ ...draft, items: [] }));
+        return true;
+      }
+
+      if (isOffline) {
+        const queued: OfflineOrder = {
+          id: `${Date.now()}`,
+          items: orderItems,
+          paymentMethod,
+          notes,
+          createdAt: new Date().toISOString(),
+        };
+        setOfflineQueue((prev) => [...prev, queued]);
+        updateDraft((draft) => ({ ...draft, items: [] }));
+        setOrderError('Sin conexion. Pedido guardado offline y se enviara al reconectar.');
+        return true;
+      }
       return false;
     } finally {
       setSavingOrder(false);
     }
   };
-useEffect(() => {
+
+  useEffect(() => {
+    setOfflineQueue(loadOfflineQueue());
+  }, []);
+
+  useEffect(() => {
+    persistOfflineQueue(offlineQueue);
+  }, [offlineQueue]);
+
+  useEffect(() => {
+    if (!isOffline) {
+      flushOfflineQueue();
+    }
+  }, [isOffline, offlineQueue]);
+
+  useEffect(() => {
     if (activeNav !== 'overview') return;
     loadOverviewSales();
   }, [activeNav, overviewDateFilter, overviewMethodFilter]);
@@ -275,6 +445,83 @@ useEffect(() => {
     if (activeNav !== 'pending') return;
     loadPendingSales();
   }, [activeNav, pendingFilter, pendingDateFilter, pendingSearch]);
+
+  // Suscripciones Realtime (sales) para refrescar overview/pending/closing
+  useEffect(() => {
+    const ch = supabase
+      .channel('sales-changes')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'sales' },
+        () => {
+          if (activeNav === 'overview') loadOverviewSales();
+          if (activeNav === 'pending') loadPendingSales();
+          if (activeNav === 'closing') loadClosingSales();
+        },
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(ch);
+    };
+  }, [activeNav, overviewDateFilter, overviewMethodFilter, pendingFilter, pendingDateFilter, pendingSearch]);
+
+  useEffect(() => {
+    const ch = supabase
+      .channel('sale-items-changes')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'sale_items' },
+        () => {
+          if (activeNav === 'overview') loadOverviewSales();
+          if (activeNav === 'pending') loadPendingSales();
+          if (activeNav === 'closing') loadClosingSales();
+        },
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(ch);
+    };
+  }, [activeNav, overviewDateFilter, overviewMethodFilter, pendingFilter, pendingDateFilter, pendingSearch]);
+
+  // Polling más corto (15s) como respaldo multi-puesto
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (activeNav === 'overview') loadOverviewSales();
+      if (activeNav === 'closing') loadClosingSales();
+      if (activeNav === 'pending') loadPendingSales();
+    }, 15000);
+    return () => clearInterval(interval);
+  }, [activeNav, overviewDateFilter, overviewMethodFilter, pendingFilter, pendingDateFilter, pendingSearch]);
+
+  useEffect(() => {
+    const ch = supabase
+      .channel('sale-items-changes')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'sale_items' },
+        () => {
+          if (activeNav === 'overview') loadOverviewSales();
+          if (activeNav === 'pending') loadPendingSales();
+          if (activeNav === 'closing') loadClosingSales();
+        },
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(ch);
+    };
+  }, [activeNav, overviewDateFilter, overviewMethodFilter, pendingFilter, pendingDateFilter, pendingSearch]);
+
+  // Estado offline/online
+  useEffect(() => {
+    const handleOnline = () => setIsOffline(false);
+    const handleOffline = () => setIsOffline(true);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
 
   const calcRange = (filter: OverviewDateFilter) => {
     const start = new Date();
@@ -300,7 +547,7 @@ useEffect(() => {
     try {
       const query = supabase
         .from('sales')
-        .select('id, created_at, total_amount, payment_method, notes')
+        .select('id, created_at, total_amount, payment_method, notes, paid_at, paid_by, paid_method')
         .order('created_at', { ascending: false });
 
       if (overviewDateFilter !== 'all') {
@@ -369,7 +616,7 @@ useEffect(() => {
     try {
       const query = supabase
         .from('sales')
-        .select('id, created_at, total_amount, payment_method, notes')
+        .select('id, created_at, total_amount, payment_method, notes, paid_at, paid_by, paid_method')
         .order('created_at', { ascending: false });
 
       const now = new Date();
@@ -411,6 +658,9 @@ useEffect(() => {
   const markPendingAsPaid = async (saleId: number, method: PaymentMethod, note?: string) => {
     setPendingError(null);
     setPendingInfo(null);
+    const now = new Date().toISOString();
+    const { data: userData } = await supabase.auth.getUser();
+    const userId = userData?.user?.id ?? null;
     const current = pendingSales.find((s) => s.id === saleId);
     const cleanedNotes =
       note?.trim() ||
@@ -420,13 +670,19 @@ useEffect(() => {
 
     const { error } = await supabase
       .from('sales')
-      .update({ payment_method: method, notes: cleanedNotes })
+      .update({
+        payment_method: method,
+        notes: cleanedNotes,
+        paid_at: now,
+        paid_by: userId,
+        paid_method: method,
+      })
       .eq('id', saleId);
     if (error) {
       setPendingError(error.message ?? 'No se pudo actualizar el pedido.');
       return;
     }
-    setPendingInfo('Pedido marcado como pagado.');
+    setPendingInfo(`Pedido marcado como pagado (${paymentMethodDisplay[method]})`);
     await loadPendingSales();
     if (activeNav === 'overview') loadOverviewSales();
     if (activeNav === 'closing') loadClosingSales();
@@ -484,6 +740,76 @@ useEffect(() => {
     [closingSales],
   );
 
+  const exportClosingCSV = () => {
+    const headers = ['Fecha', 'Monto', 'Metodo', 'Notas'];
+    const rows = closingSales.map((s) => {
+      const note = (s.notes || '').replace(/"/g, '""');
+      const date = new Date(s.created_at).toLocaleString('es-CL');
+      return `"${date}",${s.total_amount},"${getPaymentLabel(s.payment_method)}","${note}"`;
+    });
+    rows.push('');
+    rows.push(`Efectivo,${closingTotals.cash}`);
+    rows.push(`Tarjeta,${closingTotals.card}`);
+    rows.push(`Transferencia,${closingTotals.transfer}`);
+    rows.push(`Pendiente,${closingTotals.pending}`);
+    rows.push(`Total,${closingTotal}`);
+    const blob = new Blob([headers.join(',') + '\n' + rows.join('\n')], {
+      type: 'text/csv;charset=utf-8;',
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'cierre_caja.csv';
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const exportClosingPDF = () => {
+    const win = window.open('', '_blank');
+    if (!win) return;
+    const rows = closingSales
+      .map(
+        (s) =>
+          `<tr><td>${new Date(s.created_at).toLocaleString('es-CL')}</td><td>$${formatCLP(
+            s.total_amount,
+          )}</td><td>${getPaymentLabel(s.payment_method)}</td><td>${s.notes || '-'}</td></tr>`,
+      )
+      .join('');
+    win.document.write(`
+      <html>
+        <head>
+          <title>Cierre de caja</title>
+          <style>
+            body { font-family: Arial, sans-serif; padding: 16px; color: #1b1b1b; }
+            h2 { margin-bottom: 8px; }
+            table { border-collapse: collapse; width: 100%; margin-top: 12px; }
+            th, td { border: 1px solid #e4e4e4; padding: 8px; font-size: 12px; }
+            th { background: #f6f6f6; text-align: left; }
+            .totals { margin-top: 12px; font-size: 13px; }
+          </style>
+        </head>
+        <body>
+          <h2>Cierre de caja</h2>
+          <div class="totals">
+            <div>Efectivo: $${formatCLP(closingTotals.cash)}</div>
+            <div>Tarjeta: $${formatCLP(closingTotals.card)}</div>
+            <div>Transferencia: $${formatCLP(closingTotals.transfer)}</div>
+            <div>Pendiente: $${formatCLP(closingTotals.pending)}</div>
+            <div><strong>Total: $${formatCLP(closingTotal)}</strong></div>
+          </div>
+          <table>
+            <thead>
+              <tr><th>Fecha</th><th>Monto</th><th>Metodo</th><th>Notas</th></tr>
+            </thead>
+            <tbody>${rows || '<tr><td colspan="4">Sin ventas hoy</td></tr>'}</tbody>
+          </table>
+        </body>
+      </html>
+    `);
+    win.document.close();
+    win.print();
+  };
+
   const closingPageSize = 5;
   const [closingPage, setClosingPage] = useState(1);
   const closingTotalPages = Math.max(1, Math.ceil(closingSales.length / closingPageSize));
@@ -509,28 +835,28 @@ useEffect(() => {
               {loadingPending ? 'Cargando...' : `${pendingSales.length} registro(s)`}
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-2 text-sm">
-            <select
+          <div className="flex flex-wrap items-center gap-3 text-sm">
+            <SelectField
               value={pendingFilter}
-              onChange={(e) => setPendingFilter(e.target.value as PaymentMethod | 'all')}
-              className="h-10 rounded-lg border border-borderSoft bg-panel px-3 text-sm text-text focus:outline-none focus:ring-2 focus:ring-accent/30"
-            >
-              <option value="all">Solo pendientes</option>
-              <option value="cash">Efectivo</option>
-              <option value="card">Tarjeta</option>
-              <option value="transfer">Transferencia</option>
-              <option value="pending">Pendiente</option>
-            </select>
-            <select
+              onChange={(val) => setPendingFilter(val as PaymentMethod | 'all')}
+              options={[
+                { value: 'all', label: 'Solo pendientes' },
+                { value: 'cash', label: 'Efectivo' },
+                { value: 'card', label: 'Tarjeta' },
+                { value: 'transfer', label: 'Transferencia' },
+                { value: 'pending', label: 'Pendiente' },
+              ]}
+            />
+            <SelectField
               value={pendingDateFilter}
-              onChange={(e) => setPendingDateFilter(e.target.value as 'today' | '7d' | '30d' | 'all')}
-              className="h-10 rounded-lg border border-borderSoft bg-panel px-3 text-sm text-text focus:outline-none focus:ring-2 focus:ring-accent/30"
-            >
-              <option value="today">Hoy</option>
-              <option value="7d">Últimos 7 días</option>
-              <option value="30d">Últimos 30 días</option>
-              <option value="all">Todo</option>
-            </select>
+              onChange={(val) => setPendingDateFilter(val as 'today' | '7d' | '30d' | 'all')}
+              options={[
+                { value: 'today', label: 'Hoy' },
+                { value: '7d', label: 'Últimos 7 días' },
+                { value: '30d', label: 'Últimos 30 días' },
+                { value: 'all', label: 'Todo' },
+              ]}
+            />
             <input
               value={pendingSearch}
               onChange={(e) => setPendingSearch(e.target.value)}
@@ -812,12 +1138,6 @@ useEffect(() => {
           + Nuevo
         </button>
         <button
-          onClick={clearDraft}
-          className="h-9 px-3 rounded-full text-sm border border-borderSoft text-text hover:border-accent/40 transition"
-        >
-          Vaciar
-        </button>
-        <button
           onClick={deleteDraft}
           className="h-9 px-3 rounded-full text-sm border border-borderSoft text-text hover:border-accent/40 transition"
         >
@@ -825,15 +1145,21 @@ useEffect(() => {
         </button>
       </div>
 
+      {isOffline && (
+        <div className="w-full bg-amber-100 border border-amber-300 text-amber-800 text-sm rounded-xl px-3 py-2 shadow-soft">
+          Sin conexión: los cambios se intentarán cuando vuelva la red.
+        </div>
+      )}
+
       <div className="grid xl:grid-cols-[1fr_340px] gap-8 items-start">
-        <div className="bg-panel border border-borderSoft rounded-2xl p-6 shadow-soft space-y-6">
+        <div className="bg-panel border border-borderSoft rounded-2xl p-6 shadow-soft space-y-6 pb-8 md:pb-10">
           <div className="flex items-center justify-between">
             <div className="text-lg font-semibold">Productos</div>
             <div className="text-xs text-textSoft">
               {filteredProducts.length} articulo{filteredProducts.length === 1 ? '' : 's'}
             </div>
           </div>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-4 gap-4">
             {filteredProducts.map((product) => (
               <ProductCard key={product.id} product={product} onAdd={addProduct} />
             ))}
@@ -886,28 +1212,28 @@ useEffect(() => {
           <div>
             <div className="text-lg font-semibold">Todas las ventas</div>
           </div>
-          <div className="flex flex-wrap gap-2 items-center text-sm">
-            <select
+          <div className="flex flex-wrap gap-3 items-center text-sm">
+            <SelectField
               value={overviewDateFilter}
-              onChange={(e) => setOverviewDateFilter(e.target.value as OverviewDateFilter)}
-              className="h-10 rounded-lg border border-borderSoft bg-panelAlt px-3 text-sm text-text focus:outline-none focus:ring-2 focus:ring-accent/30"
-            >
-              <option value="today">Hoy</option>
-              <option value="yesterday">Ayer</option>
-              <option value="last7">Últimos 7</option>
-              <option value="all">Todas</option>
-            </select>
-            <select
+              onChange={(val) => setOverviewDateFilter(val as OverviewDateFilter)}
+              options={[
+                { value: 'today', label: 'Hoy' },
+                { value: 'yesterday', label: 'Ayer' },
+                { value: 'last7', label: 'Últimos 7' },
+                { value: 'all', label: 'Todas' },
+              ]}
+            />
+            <SelectField
               value={overviewMethodFilter}
-              onChange={(e) => setOverviewMethodFilter(e.target.value as OverviewMethodFilter)}
-              className="h-10 rounded-lg border border-borderSoft bg-panelAlt px-3 text-sm text-text focus:outline-none focus:ring-2 focus:ring-accent/30"
-            >
-              <option value="all">Método: todos</option>
-              <option value="cash">Efectivo</option>
-              <option value="card">Tarjeta</option>
-              <option value="transfer">Transferencia</option>
-              <option value="pending">Pendiente</option>
-            </select>
+              onChange={(val) => setOverviewMethodFilter(val as OverviewMethodFilter)}
+              options={[
+                { value: 'all', label: 'Método: todos' },
+                { value: 'cash', label: 'Efectivo' },
+                { value: 'card', label: 'Tarjeta' },
+                { value: 'transfer', label: 'Transferencia' },
+                { value: 'pending', label: 'Pendiente' },
+              ]}
+            />
             <button
               onClick={loadOverviewSales}
               className="h-10 px-3 rounded-lg border border-borderSoft text-sm text-text hover:border-accent/40 transition"
@@ -972,16 +1298,30 @@ useEffect(() => {
 
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6 items-start">
         <div className="bg-panel border border-borderSoft rounded-2xl p-5 shadow-soft space-y-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="text-lg font-semibold">Ventas del dia</div>
-          </div>
-          <button
-            onClick={loadClosingSales}
-            className="h-9 px-3 rounded-full border border-borderSoft text-sm text-text hover:border-accent/40 transition"
-          >
-              Refrescar
-            </button>
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <div className="text-lg font-semibold">Ventas del dia</div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={exportClosingCSV}
+                className="h-9 px-3 rounded-full border border-borderSoft text-sm text-text hover:border-accent/40 transition"
+              >
+                CSV
+              </button>
+              <button
+                onClick={exportClosingPDF}
+                className="h-9 px-3 rounded-full border border-borderSoft text-sm text-text hover:border-accent/40 transition"
+              >
+                PDF
+              </button>
+              <button
+                onClick={loadClosingSales}
+                className="h-9 px-3 rounded-full border border-borderSoft text-sm text-text hover:border-accent/40 transition"
+              >
+                Refrescar
+              </button>
+            </div>
           </div>
           {closingError && <div className="text-sm text-accent">{closingError}</div>}
           <div className="overflow-x-auto">
@@ -1122,6 +1462,7 @@ useEffect(() => {
         collapsed={sidebarCollapsed}
         onToggleCollapse={() => setSidebarCollapsed((prev) => !prev)}
         onNavigate={setActiveNav}
+        onLogout={handleLogout}
       />
 
       <div
@@ -1229,18 +1570,35 @@ useEffect(() => {
     setSavingClosing(true);
     setClosingError(null);
     try {
+      const { data: userData } = await supabase.auth.getUser();
+      const userId = userData?.user?.id ?? null;
+
+      // Totales por metodo basados en sale_items del dia
+      const { from, to } = todayRange();
+      const { data: itemRows, error: itemError } = await supabase
+        .from('sale_items')
+        .select('total_price, sales!inner(payment_method, created_at)')
+        .gte('sales.created_at', from)
+        .lt('sales.created_at', to);
+      if (itemError) throw itemError;
+
+      const totalsByMethod: Record<string, number> = { cash: 0, card: 0, transfer: 0, pending: 0, other: 0 };
+      (itemRows || []).forEach((row: any) => {
+        const methodRaw = row.sales?.payment_method || 'other';
+        const method = paymentMethods.includes(methodRaw as PaymentMethod) ? methodRaw : 'other';
+        totalsByMethod[method] = (totalsByMethod[method] || 0) + Number(row.total_price || 0);
+      });
+
       const payload = {
-        closed_at: new Date().toISOString(),
-        total_sales: closingTotal,
-        cash_expected: cashExpected,
-        cash_counted: cashCountedNumber,
-        cash_diff: cashDiff,
-        card_total: closingTotals.card || 0,
-        transfer_total: closingTotals.transfer || 0,
-        pending_total: closingTotals.pending || 0,
-        notes: closingNotes || null,
+        date: new Date().toISOString().slice(0, 10),
+        expected_cash: Math.round(totalsByMethod.cash || 0),
+        real_cash: Math.round(cashCountedNumber),
+        expected_transfers: Math.round((totalsByMethod.card || 0) + (totalsByMethod.transfer || 0)),
+        real_transfers: Math.round((totalsByMethod.card || 0) + (totalsByMethod.transfer || 0)),
+        comment: closingNotes || null,
+        closed_by: userId,
       };
-      const { error } = await supabase.from('cash_closings').insert(payload);
+      const { error } = await supabase.from('cash_closures').insert(payload);
       if (error) throw error;
       setCashCounted('');
       setClosingNotes('');
