@@ -1,66 +1,63 @@
-# POS Feria – Demo de Punto de Venta para ferias 🎄
+# Caja Feria – Punto de Venta para ferias y eventos 🎄🛒
 
-Este repositorio contiene una **demo de punto de venta (POS)** pensada para ferias / eventos (por ejemplo, feria de Navidad).  
-La aplicación está construida como una **SPA** con **React + Vite + TypeScript** y usa **Supabase** como backend-as-a-service (auth, base de datos y RLS).
+**Caja Feria** es una aplicación de punto de venta (POS) pensada para **ferias temporales, eventos especiales y campañas de temporada**.  
+Está optimizada para escenarios como ferias navideñas, kermesses, ferias municipales o ventas solidarias, donde se necesita:
 
-
----
-
-## 🧱 Stack tecnológico
-
-- **Frontend:** React 19 + Vite + TypeScript
-- **Estilos:** Tailwind CSS
-- **Backend-as-a-service:** Supabase
-  - PostgreSQL gestionado
-  - Auth (usuarios/roles)
-  - Row Level Security (RLS)
-- **Infraestructura:** Netlify (deploy automático desde GitHub)
-- **Base de datos:** scripts SQL en `supabase/sql`
+- Vender rápido.
+- Controlar un stock limitado.
+- Hacer cierres de caja claros al final del día.
 
 ---
 
-## ✨ Funcionalidades (overview)
+## 🎯 ¿Para quién es?
 
-> Ajusta esta lista según lo que efectivamente hace tu app.
+Caja Feria puede ser útil para:
 
-- Flujo de **venta rápida** para feria / puesto:
-  - Registro de productos vendidos.
-  - Cálculo automático de totales.
-- **Control de stock**:
-  - Columna de stock en la tabla de productos.
-  - Descuento de stock al registrar ventas (según lógica implementada en el frontend).
-- **Seguimiento de pagos**:
-  - Tracking del estado de pago de las ventas (pagado / pendiente).
-- **Cierres de caja y auditoría**:
-  - Registro de cierres de caja.
-  - Tablas de auditoría para revisar movimientos.
-- **Autenticación con Supabase**:
-  - Login de usuarios (por ejemplo cajeros / administradores).
-  - Acceso restringido a datos según usuario/rol mediante RLS.
+- **Ferias navideñas y de temporada** (decoración, regalos, artesanía).
+- **Emprendedores** que montan puestos por días o semanas.
+- **Municipios** que organizan ferias y necesitan orden en las cajas.
+- **Colegios y centros comunitarios** que hacen kermesses o bingos.
+- **ONGs y fundaciones** que realizan ventas solidarias puntuales.
+
+La idea es entregar una herramienta liviana, clara y visualmente amigable para que cualquier persona pueda usarla en caja sin enredarse.
 
 ---
 
-## 📁 Estructura del repositorio
+## ✨ Funcionalidades principales
 
+- 🧾 **Registro de ventas rápido**  
+  Interfaz con tarjetas de producto y filtros por categoría para seleccionar productos en pocos clics.
+
+- 📦 **Control de stock**  
+  Cada producto muestra el stock disponible y avisa cuando está agotado, ayudando a evitar sobreventas.
+
+- 💳 **Múltiples formas de pago**  
+  Soporte para **Efectivo**, **Tarjeta**, **Transferencia** y estado **Pendiente**, adaptándose a la realidad de las ferias.
+
+- 🧺 **Pedidos en paralelo**  
+  Posibilidad de llevar **varios pedidos abiertos** (por ejemplo, si un cliente sigue eligiendo y otro ya quiere pagar).
+
+- ⏸️ **Gestión de pedidos pendientes**  
+  Registro de pedidos que aún no se han pagado completamente, ideal para reservas o pagos diferidos.
+
+- ✅ **Cierres de caja con auditoría**  
+  Módulo de cierre para comparar lo esperado vs lo contado en caja y dejar un registro de cada cierre.
+
+- 👥 **Usuarios con autenticación**  
+  Acceso mediante usuario/contraseña y seguridad basada en políticas de Supabase (RLS).
+
+- 🧼 **Interfaz simple y minimalista**  
+  Diseñada para que cajeros y encargados puedan aprender a usarla en pocos minutos.
+
+---
+
+## 🧱 Stack tecnológico (resumen)
+
+- **Frontend:** React + Vite + TypeScript  
+- **Estilos:** Tailwind CSS  
+- **Backend-as-a-service:** [Supabase](https://supabase.com/)  
+  - PostgreSQL gestionado  
+  - Autenticación de usuarios  
+  - Row-Level Security (RLS) para control de acceso  
+- **Infraestructura de despliegue:** pensada para servicios tipo Netlify / Vercel
 ```txt
-POS-demo/
-├─ caja-feria/              # App principal (SPA React + Vite)
-│  ├─ public/
-│  ├─ src/
-│  │  ├─ components/        # Componentes reutilizables de UI
-│  │  ├─ pages/             # Pantallas principales
-│  │  ├─ hooks/             # Hooks personalizados (si aplica)
-│  │  ├─ lib/               # Cliente Supabase y utilidades
-│  │  └─ main.tsx           # Punto de entrada de la app
-│  ├─ index.html
-│  ├─ package.json
-│  ├─ vite.config.ts
-│  └─ tailwind.config.mjs
-├─ supabase/
-│  └─ sql/                  # Scripts SQL para la base de datos
-│     ├─ 001_add_stock_column.sql
-│     ├─ 002_rls_auth.sql
-│     ├─ 003_add_paid_tracking.sql
-│     └─ 004_add_cash_closing_audit.sql
-├─ package.json             # Dependencias a nivel raíz (si se usan)
-└─ README.md
