@@ -1887,7 +1887,7 @@ const FestivePOS = () => {
 
       {activeNav === 'sales' && (
         <>
-          <div className="xl:hidden fixed bottom-32 left-1/2 -translate-x-1/2 w-[calc(100%-32px)] max-w-lg z-40">
+          <div className="xl:hidden fixed bottom-[93px] left-1/2 -translate-x-1/2 w-[calc(100%-32px)] max-w-lg z-40">
             <div className="bg-panel border border-panelBorder text-text shadow-card rounded-2xl px-4 py-3 flex items-center justify-between">
               <div>
                 <div className="text-xs text-sidebarMuted">Pedido en curso</div>
