@@ -159,6 +159,8 @@ const FestivePOS = () => {
   const [productForm, setProductForm] = useState<Record<string, { name: string; price: number; stock: number; category: string }>>({});
   const [productSearch, setProductSearch] = useState('');
   const [editProductId, setEditProductId] = useState<string | null>(null);
+  const [newProductModal, setNewProductModal] = useState(false);
+  const [newProduct, setNewProduct] = useState({ name: '', price: 0, stock: 0, category: 'Otros' });
   const handleLogout = async () => {
     await supabase.auth.signOut();
     window.location.reload();
@@ -323,6 +325,39 @@ const FestivePOS = () => {
     const stock = Number.isNaN(Number(data.stock)) ? 0 : data.stock;
     const ok = await handleUpdateProduct(id, price, stock);
     if (ok) setEditProductId(null);
+  };
+
+  const handleCreateProduct = async () => {
+    if (!canEditProducts) {
+      setProductUpdateError('Solo admin puede crear productos.');
+      return;
+    }
+    if (!newProduct.name.trim()) {
+      setProductUpdateError('El nombre es obligatorio.');
+      return;
+    }
+    setProductUpdateError(null);
+    setProductUpdateInfo(null);
+    try {
+      const payload = {
+        name: newProduct.name.trim(),
+        default_price: Number.isNaN(Number(newProduct.price)) ? 0 : Number(newProduct.price),
+        stock: Number.isNaN(Number(newProduct.stock)) ? 0 : Number(newProduct.stock),
+        category: newProduct.category.trim() || 'Otros',
+        is_active: true,
+      };
+      const { data, error } = await supabase.from('products').insert(payload).select('id').single();
+      if (error) throw error;
+      setNewProductModal(false);
+      setNewProduct({ name: '', price: 0, stock: 0, category: 'Otros' });
+      await loadProducts();
+      if (data?.id) {
+        setEditProductId(String(data.id));
+        setProductUpdateInfo('Producto creado.');
+      }
+    } catch (err: any) {
+      setProductUpdateError(err?.message ?? 'No se pudo crear el producto.');
+    }
   };
 
   const saveOrderOnline = async (
@@ -1574,13 +1609,15 @@ const FestivePOS = () => {
                     </option>
                   ))}
               </select>
-              <button
-                onClick={loadProducts}
-                className="h-9 px-3 rounded-lg border border-borderSoft text-sm text-text hover:border-accent/40 transition"
-              >
-                Refrescar
-              </button>
             </div>
+          </div>
+          <div className="pt-1">
+            <button
+              onClick={() => setNewProductModal(true)}
+              className="w-full md:w-auto h-9 px-3 rounded-lg bg-[#c0392b] text-white text-sm font-semibold shadow-soft hover:shadow-card transition"
+            >
+              + Nuevo producto
+            </button>
           </div>
           {productUpdateError && <div className="text-sm text-accent">{productUpdateError}</div>}
           {productUpdateInfo && <div className="text-sm text-green-700">{productUpdateInfo}</div>}
@@ -1658,6 +1695,84 @@ const FestivePOS = () => {
                     </>
                   );
                 })()}
+              </div>
+            </div>
+          )}
+
+          {newProductModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-sm p-4">
+              <div className="w-full max-w-md rounded-2xl bg-card border border-borderSoft shadow-card p-5 space-y-4">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <div className="text-sm font-semibold">Nuevo producto</div>
+                    <div className="text-xs text-textSoft">Completa los datos y guarda</div>
+                  </div>
+                  <button
+                    onClick={() => setNewProductModal(false)}
+                    className="h-8 px-3 rounded-md border border-borderSoft text-xs text-text hover:border-accent/40 transition"
+                  >
+                    Cerrar
+                  </button>
+                </div>
+                <div className="space-y-3 text-sm">
+                  <label className="flex flex-col gap-1">
+                    <span className="text-textSoft">Nombre</span>
+                    <input
+                      value={newProduct.name}
+                      onChange={(e) => setNewProduct((prev) => ({ ...prev, name: e.target.value }))}
+                      className="w-full h-9 rounded-md border border-borderSoft bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-accent/30"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="text-textSoft">Precio</span>
+                    <input
+                      value={newProduct.price}
+                      onChange={(e) => setNewProduct((prev) => ({ ...prev, price: Number(e.target.value) || 0 }))}
+                      className="w-full h-9 rounded-md border border-borderSoft bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-accent/30"
+                      inputMode="numeric"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="text-textSoft">Stock</span>
+                    <input
+                      value={newProduct.stock}
+                      onChange={(e) => setNewProduct((prev) => ({ ...prev, stock: Number(e.target.value) || 0 }))}
+                      className="w-full h-9 rounded-md border border-borderSoft bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-accent/30"
+                      inputMode="numeric"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="text-textSoft">Categoria</span>
+                    <select
+                      value={newProduct.category}
+                      onChange={(e) => setNewProduct((prev) => ({ ...prev, category: e.target.value }))}
+                      className="w-full h-9 rounded-md border border-borderSoft bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-accent/30"
+                    >
+                      <option value="">Selecciona una categoria</option>
+                      {categoryOptions
+                        .filter((c) => c !== 'Todo')
+                        .map((c) => (
+                          <option key={c} value={c}>
+                            {c}
+                          </option>
+                        ))}
+                    </select>
+                  </label>
+                </div>
+                <div className="flex items-center justify-end gap-2 pt-1">
+                  <button
+                    onClick={() => setNewProductModal(false)}
+                    className="h-9 px-3 rounded-md border border-borderSoft text-xs text-text hover:border-accent/40 transition"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    onClick={handleCreateProduct}
+                    className="h-9 px-3 rounded-md bg-[#c0392b] text-white text-xs font-semibold shadow-soft hover:shadow-card transition"
+                  >
+                    Guardar
+                  </button>
+                </div>
               </div>
             </div>
           )}
@@ -1748,6 +1863,17 @@ const FestivePOS = () => {
                 <span className="text-xs text-textSoft mr-1">Modo</span>
                 <span className="font-semibold">Caja feria</span>
               </div>
+              <button
+                onClick={handleLogout}
+                className="md:hidden w-9 h-9 rounded-full border border-borderSoft bg-panel text-textSoft hover:border-accent/50 hover:text-accent transition shadow-soft flex items-center justify-center"
+                aria-label="Cerrar sesión"
+              >
+                <svg viewBox="0 0 24 24" className="w-4 h-4" stroke="currentColor" fill="none" strokeWidth="1.6">
+                  <path d="M10 17l-5-5 5-5" />
+                  <path d="M15 12H5" />
+                  <path d="M19 5v14" />
+                </svg>
+              </button>
             </div>
           </div>
 
