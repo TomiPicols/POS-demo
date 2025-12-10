@@ -1,73 +1,63 @@
-# React + TypeScript + Vite
+# Caja Feria – Punto de Venta para ferias y eventos 🎄🛒
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+**Caja Feria** es una aplicación de punto de venta (POS) pensada para **ferias temporales, eventos especiales y campañas de temporada**.  
+Está optimizada para escenarios como ferias navideñas, kermesses, ferias municipales o ventas solidarias, donde se necesita:
 
-Currently, two official plugins are available:
+- Vender rápido.
+- Controlar un stock limitado.
+- Hacer cierres de caja claros al final del día.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+---
 
-## React Compiler
+## 🎯 ¿Para quién es?
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+Caja Feria puede ser útil para:
 
-## Expanding the ESLint configuration
+- **Ferias navideñas y de temporada** (decoración, regalos, artesanía).
+- **Emprendedores** que montan puestos por días o semanas.
+- **Municipios** que organizan ferias y necesitan orden en las cajas.
+- **Colegios y centros comunitarios** que hacen kermesses o bingos.
+- **ONGs y fundaciones** que realizan ventas solidarias puntuales.
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+La idea es entregar una herramienta liviana, clara y visualmente amigable para que cualquier persona pueda usarla en caja sin enredarse.
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+---
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+## ✨ Funcionalidades principales
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+- 🧾 **Registro de ventas rápido**  
+  Interfaz con tarjetas de producto y filtros por categoría para seleccionar productos en pocos clics.
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+- 📦 **Control de stock**  
+  Cada producto muestra el stock disponible y avisa cuando está agotado, ayudando a evitar sobreventas.
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+- 💳 **Múltiples formas de pago**  
+  Soporte para **Efectivo**, **Tarjeta**, **Transferencia** y estado **Pendiente**, adaptándose a la realidad de las ferias.
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+- 🧺 **Pedidos en paralelo**  
+  Posibilidad de llevar **varios pedidos abiertos** (por ejemplo, si un cliente sigue eligiendo y otro ya quiere pagar).
+
+- ⏸️ **Gestión de pedidos pendientes**  
+  Registro de pedidos que aún no se han pagado completamente, ideal para reservas o pagos diferidos.
+
+- ✅ **Cierres de caja con auditoría**  
+  Módulo de cierre para comparar lo esperado vs lo contado en caja y dejar un registro de cada cierre.
+
+- 👥 **Usuarios con autenticación**  
+  Acceso mediante usuario/contraseña y seguridad basada en políticas de Supabase (RLS).
+
+- 🧼 **Interfaz simple y minimalista**  
+  Diseñada para que cajeros y encargados puedan aprender a usarla en pocos minutos.
+
+---
+
+## 🧱 Stack tecnológico (resumen)
+
+- **Frontend:** React + Vite + TypeScript  
+- **Estilos:** Tailwind CSS  
+- **Backend-as-a-service:** [Supabase](https://supabase.com/)  
+  - PostgreSQL gestionado  
+  - Autenticación de usuarios  
+  - Row-Level Security (RLS) para control de acceso  
+- **Infraestructura de despliegue:** pensada para servicios tipo Netlify / Vercel
+```txt
