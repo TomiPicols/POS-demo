@@ -51,6 +51,17 @@ const navItems: NavItem[] = [
       </svg>
     ),
   },
+  {
+    key: 'products',
+    label: 'Productos',
+    icon: (
+      <svg viewBox="0 0 24 24" className="w-4 h-4" stroke="currentColor" fill="none" strokeWidth="1.6">
+        <path d="M4 7h16v11H4z" />
+        <path d="M8 7V5h8v2" />
+        <path d="M9 11h6" />
+      </svg>
+    ),
+  },
 ];
 
 type SidebarProps = {
@@ -59,9 +70,11 @@ type SidebarProps = {
   onToggleCollapse?: () => void;
   onNavigate?: (key: string) => void;
   onLogout?: () => void;
+  allowedKeys?: string[];
 };
 
-const Sidebar = ({ active, collapsed = false, onToggleCollapse, onNavigate, onLogout }: SidebarProps) => {
+const Sidebar = ({ active, collapsed = false, onToggleCollapse, onNavigate, onLogout, allowedKeys }: SidebarProps) => {
+  const items = allowedKeys ? navItems.filter((n) => allowedKeys.includes(n.key)) : navItems;
   return (
     <aside
       className={`hidden xl:flex ${collapsed ? 'w-20' : 'w-64'} bg-white/85 backdrop-blur-xl text-sidebarText flex-col shadow-card border border-panelBorder/70 transition-all duration-200 sticky top-0 h-screen`}
@@ -77,7 +90,7 @@ const Sidebar = ({ active, collapsed = false, onToggleCollapse, onNavigate, onLo
         </button>
       </div>
       <nav className="flex-1 px-3 py-5 space-y-2 overflow-y-auto">
-        {navItems.map((item) => {
+        {items.map((item) => {
           const isActive = item.key === active;
           return (
             <button

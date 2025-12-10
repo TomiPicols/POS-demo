@@ -49,17 +49,30 @@ const navItems: NavItem[] = [
       </svg>
     ),
   },
+  {
+    key: 'products',
+    label: 'Productos',
+    icon: (
+      <svg viewBox="0 0 24 24" className="w-4 h-4" stroke="currentColor" fill="none" strokeWidth="1.6">
+        <path d="M4 7h16v11H4z" />
+        <path d="M8 7V5h8v2" />
+        <path d="M9 11h6" />
+      </svg>
+    ),
+  },
 ];
 
 type MobileNavProps = {
   active: string;
   onNavigate?: (key: string) => void;
+  allowedKeys?: string[];
 };
 
-const MobileNav = ({ active, onNavigate }: MobileNavProps) => {
+const MobileNav = ({ active, onNavigate, allowedKeys }: MobileNavProps) => {
+  const items = allowedKeys ? navItems.filter((n) => allowedKeys.includes(n.key)) : navItems;
   return (
     <nav className="xl:hidden fixed bottom-4 left-1/2 -translate-x-1/2 w-[calc(100%-32px)] max-w-3xl bg-white/90 backdrop-blur-xl text-text shadow-card rounded-xl px-3 py-2 flex justify-between items-center border border-borderSoft">
-      {navItems.map((item) => {
+      {items.map((item) => {
         const isActive = item.key === active;
         return (
           <button

@@ -110,8 +110,7 @@ const navTitles: Record<string, string> = {
   sales: 'Ventas',
   closing: 'Cierre',
   pending: 'Pendientes',
-  settings: 'Ajustes',
-  ai: 'IA',
+  products: 'Productos',
 };
 
 type OverviewDateFilter = 'today' | 'yesterday' | 'last7' | 'all';
@@ -154,6 +153,12 @@ const FestivePOS = () => {
   const [overviewMethodFilter, setOverviewMethodFilter] = useState<OverviewMethodFilter>('all');
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
   const [offlineQueue, setOfflineQueue] = useState<OfflineOrder[]>([]);
+  const [productUpdateError, setProductUpdateError] = useState<string | null>(null);
+  const [productUpdateInfo, setProductUpdateInfo] = useState<string | null>(null);
+  const [userRole, setUserRole] = useState<string | null>(null);
+  const [productForm, setProductForm] = useState<Record<string, { name: string; price: number; stock: number; category: string }>>({});
+  const [productSearch, setProductSearch] = useState('');
+  const [editProductId, setEditProductId] = useState<string | null>(null);
   const handleLogout = async () => {
     await supabase.auth.signOut();
     window.location.reload();
@@ -239,11 +244,50 @@ const FestivePOS = () => {
     updateDraft((draft) => ({ ...draft, paymentMethod: method }));
   };
 
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => {
+      const role = (data.user as any)?.app_metadata?.role ?? null;
+      setUserRole(role);
+    });
+  }, []);
+
+  const canEditProducts = userRole === 'admin';
+
   const addDraft = () => {
-    const nextNumber = drafts.length + 1;
+    const maxNumber = drafts.reduce((max, d) => {
+      const match = d.label.match(/(\d+)/);
+      const n = match ? Number.parseInt(match[1], 10) : 0;
+      return Number.isNaN(n) ? max : Math.max(max, n);
+    }, 0);
+    const nextNumber = maxNumber + 1;
     const newId = `${Date.now()}`;
     setDrafts((prev) => [...prev, { id: newId, label: `Pedido ${nextNumber}`, items: [], paymentMethod: 'card' }]);
     setActiveDraftId(newId);
+  };
+
+  const handleUpdateProduct = async (id: string, price: number, stock: number): Promise<boolean> => {
+    if (!canEditProducts) {
+      setProductUpdateError('Solo admin puede editar productos.');
+      return false;
+    }
+    setProductUpdateError(null);
+    setProductUpdateInfo(null);
+    try {
+      const payload = {
+        default_price: price,
+        stock,
+        name: productForm[id]?.name,
+        category: productForm[id]?.category,
+      };
+      const { error } = await supabase.from('products').update(payload).eq('id', Number(id));
+      if (error) throw error;
+      setProducts((prev) => prev.map((p) => (p.id === id ? { ...p, price, stock, name: payload.name || p.name, category: payload.category || p.category } : p)));
+      setProductUpdateInfo('Producto actualizado.');
+      return true;
+    } catch (err: any) {
+      setProductUpdateError(err?.message ?? 'No se pudo actualizar el producto.');
+      return false;
+    }
   };
 
   const deleteDraft = () => {
@@ -257,6 +301,28 @@ const FestivePOS = () => {
       setActiveDraftId(nextId);
       return remaining;
     });
+  };
+
+  const handleProductFieldChange = (id: string, field: 'name' | 'price' | 'stock' | 'category', value: string) => {
+    setProductForm((prev) => {
+      const current = prev[id] ?? { name: '', price: 0, stock: 0, category: '' };
+      const next = { ...current };
+      if (field === 'price' || field === 'stock') {
+        (next as any)[field] = Number.isNaN(Number.parseInt(value, 10)) ? 0 : Number.parseInt(value, 10);
+      } else {
+        (next as any)[field] = value;
+      }
+      return { ...prev, [id]: next };
+    });
+  };
+
+  const handleSaveProductRow = async (id: string) => {
+    const data = productForm[id];
+    if (!data) return;
+    const price = Number.isNaN(Number(data.price)) ? 0 : data.price;
+    const stock = Number.isNaN(Number(data.stock)) ? 0 : data.stock;
+    const ok = await handleUpdateProduct(id, price, stock);
+    if (ok) setEditProductId(null);
   };
 
   const saveOrderOnline = async (
@@ -431,6 +497,12 @@ const FestivePOS = () => {
   }, [isOffline, offlineQueue]);
 
   useEffect(() => {
+    if (!canEditProducts && activeNav === 'products') {
+      setActiveNav('sales');
+    }
+  }, [canEditProducts, activeNav]);
+
+  useEffect(() => {
     if (activeNav !== 'overview') return;
     loadOverviewSales();
   }, [activeNav, overviewDateFilter, overviewMethodFilter]);
@@ -590,7 +662,13 @@ const FestivePOS = () => {
         .eq('is_active', true)
         .order('name');
       if (error) throw error;
-      setProducts(mapProducts(data));
+      const mapped = mapProducts(data);
+      setProducts(mapped);
+      const form: Record<string, { name: string; price: number; stock: number; category: string }> = {};
+      mapped.forEach((p) => {
+        form[p.id] = { name: p.name, price: p.price, stock: p.stock ?? 0, category: p.category };
+      });
+      setProductForm(form);
     } catch (err: any) {
       const message = err?.message?.toLowerCase?.() || '';
       if (message.includes('stock') && message.includes('column')) {
@@ -1162,6 +1240,8 @@ const FestivePOS = () => {
               {filteredProducts.length} articulo{filteredProducts.length === 1 ? '' : 's'}
             </div>
           </div>
+          {canEditProducts && productUpdateError && <div className="text-sm text-accent">{productUpdateError}</div>}
+          {canEditProducts && productUpdateInfo && <div className="text-sm text-green-700">{productUpdateInfo}</div>}
           <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-4 gap-4">
             {filteredProducts.map((product) => (
               <ProductCard key={product.id} product={product} onAdd={addProduct} />
@@ -1458,6 +1538,178 @@ const FestivePOS = () => {
     </div>
   );
 
+  const productsContent = (
+    <div className="space-y-5">
+      {!canEditProducts && (
+        <div className="text-sm text-accent bg-accent/10 border border-accent/30 rounded-lg px-3 py-2">
+          Solo admin puede editar productos.
+        </div>
+      )}
+
+      {canEditProducts && (
+        <div className="bg-panel border border-borderSoft rounded-2xl p-5 shadow-soft space-y-4">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div>
+              <div className="text-lg font-semibold">Gestion de productos</div>
+              <div className="text-xs text-textSoft">{products.length} articulo(s)</div>
+            </div>
+            <div className="flex flex-col md:flex-row gap-2 w-full md:w-auto">
+              <input
+                value={productSearch}
+                onChange={(e) => setProductSearch(e.target.value)}
+                placeholder="Buscar producto..."
+                className="w-full md:w-56 h-9 rounded-lg border border-borderSoft bg-white px-3 text-sm text-text focus:outline-none focus:ring-2 focus:ring-accent/30"
+              />
+              <select
+                value={selectedCategory}
+                onChange={(e) => setSelectedCategory(e.target.value)}
+                className="h-9 rounded-lg border border-borderSoft bg-white px-3 text-sm text-text focus:outline-none focus:ring-2 focus:ring-accent/30"
+              >
+                <option value="Todo">Todas las categorias</option>
+                {categoryOptions
+                  .filter((c) => c !== 'Todo')
+                  .map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+              </select>
+              <button
+                onClick={loadProducts}
+                className="h-9 px-3 rounded-lg border border-borderSoft text-sm text-text hover:border-accent/40 transition"
+              >
+                Refrescar
+              </button>
+            </div>
+          </div>
+          {productUpdateError && <div className="text-sm text-accent">{productUpdateError}</div>}
+          {productUpdateInfo && <div className="text-sm text-green-700">{productUpdateInfo}</div>}
+
+          {editProductId && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-sm p-4">
+              <div className="w-full max-w-md rounded-2xl bg-card border border-borderSoft shadow-card p-5 space-y-4">
+                {(() => {
+                  const form = productForm[editProductId];
+                  if (!form) return <div className="text-sm text-textSoft">Producto no encontrado.</div>;
+                  return (
+                    <>
+                      <div className="flex items-start justify-between">
+                        <div>
+                          <div className="text-sm font-semibold">Editar producto</div>
+                          <div className="text-xs text-textSoft">ID: {editProductId}</div>
+                        </div>
+                        <button
+                          onClick={() => setEditProductId(null)}
+                          className="h-8 px-3 rounded-md border border-borderSoft text-xs text-text hover:border-accent/40 transition"
+                        >
+                          Cerrar
+                        </button>
+                      </div>
+                      <div className="space-y-3 text-sm">
+                        <label className="flex flex-col gap-1">
+                          <span className="text-textSoft">Nombre</span>
+                          <input
+                            value={form.name}
+                            onChange={(e) => handleProductFieldChange(editProductId, 'name', e.target.value)}
+                            className="w-full h-9 rounded-md border border-borderSoft bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-accent/30"
+                          />
+                        </label>
+                        <label className="flex flex-col gap-1">
+                          <span className="text-textSoft">Precio</span>
+                          <input
+                            value={form.price}
+                            onChange={(e) => handleProductFieldChange(editProductId, 'price', e.target.value)}
+                            className="w-full h-9 rounded-md border border-borderSoft bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-accent/30"
+                            inputMode="numeric"
+                          />
+                        </label>
+                        <label className="flex flex-col gap-1">
+                          <span className="text-textSoft">Stock</span>
+                          <input
+                            value={form.stock}
+                            onChange={(e) => handleProductFieldChange(editProductId, 'stock', e.target.value)}
+                            className="w-full h-9 rounded-md border border-borderSoft bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-accent/30"
+                            inputMode="numeric"
+                          />
+                        </label>
+                        <label className="flex flex-col gap-1">
+                          <span className="text-textSoft">Categoria</span>
+                          <input
+                            value={form.category}
+                            onChange={(e) => handleProductFieldChange(editProductId, 'category', e.target.value)}
+                            className="w-full h-9 rounded-md border border-borderSoft bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-accent/30"
+                          />
+                        </label>
+                      </div>
+                      <div className="flex items-center justify-end gap-2 pt-1">
+                        <button
+                          onClick={() => setEditProductId(null)}
+                          className="h-9 px-3 rounded-md border border-borderSoft text-xs text-text hover:border-accent/40 transition"
+                        >
+                          Cancelar
+                        </button>
+                        <button
+                          onClick={() => handleSaveProductRow(editProductId)}
+                          className="h-9 px-3 rounded-md bg-accent text-panel text-xs font-semibold shadow-soft hover:shadow-card transition"
+                        >
+                          Guardar
+                        </button>
+                      </div>
+                    </>
+                  );
+                })()}
+              </div>
+            </div>
+          )}
+
+          {(() => {
+            const filtered = products
+              .filter((p) => (selectedCategory === 'Todo' ? true : p.category === selectedCategory))
+              .filter((p) => p.name.toLowerCase().includes(productSearch.trim().toLowerCase()));
+            return (
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-xs text-textSoft border-b border-borderSoft/70">
+                      <th className="py-2 pr-3">Nombre</th>
+                      <th className="py-2 pr-3">Precio</th>
+                      <th className="py-2 pr-3">Stock</th>
+                      <th className="py-2 pr-3">Categoria</th>
+                      <th className="py-2 pr-3 text-right">Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filtered.map((p) => {
+                      const form = productForm[p.id] ?? { name: p.name, price: p.price, stock: p.stock ?? 0, category: p.category };
+                      return (
+                        <tr key={p.id} className="border-b border-borderSoft/50">
+                          <td className="py-2 pr-3">{form.name}</td>
+                          <td className="py-2 pr-3">${formatCLP(form.price)}</td>
+                          <td className="py-2 pr-3">{form.stock}</td>
+                          <td className="py-2 pr-3">{form.category}</td>
+                          <td className="py-2 pr-3 text-right">
+                            <button
+                              onClick={() => setEditProductId(p.id)}
+                              className="h-9 px-3 rounded-lg border border-borderSoft text-xs text-text hover:border-accent/40 transition"
+                            >
+                              Editar
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                {!filtered.length && (
+                  <div className="text-sm text-textSoft py-3">Sin resultados para esta busqueda.</div>
+                )}
+              </div>
+            );
+          })()}
+        </div>
+      )}
+    </div>
+  );
   return (
     <div className="min-h-screen bg-bg text-text flex">
       <Sidebar
@@ -1466,6 +1718,7 @@ const FestivePOS = () => {
         onToggleCollapse={() => setSidebarCollapsed((prev) => !prev)}
         onNavigate={setActiveNav}
         onLogout={handleLogout}
+        allowedKeys={canEditProducts ? ['overview', 'sales', 'closing', 'pending', 'products'] : ['overview', 'sales', 'closing', 'pending']}
       />
 
       <div
@@ -1502,6 +1755,7 @@ const FestivePOS = () => {
           {activeNav === 'sales' && salesContent}
           {activeNav === 'closing' && closingContent}
           {activeNav === 'pending' && pendingContent}
+          {activeNav === 'products' && productsContent}
         </div>
       </div>
 
@@ -1564,7 +1818,11 @@ const FestivePOS = () => {
 
       {pendingModal}
 
-      <MobileNav active={activeNav} onNavigate={setActiveNav} />
+      <MobileNav
+        active={activeNav}
+        onNavigate={setActiveNav}
+        allowedKeys={canEditProducts ? ['overview', 'sales', 'closing', 'pending', 'products'] : ['overview', 'sales', 'closing', 'pending']}
+      />
     </div>
   );
 

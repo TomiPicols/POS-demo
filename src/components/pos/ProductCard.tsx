@@ -23,9 +23,7 @@ const ProductCard = ({ product, onAdd }: ProductCardProps) => {
         </div>
         <div className="flex flex-col gap-1 w-full">
           <div className="text-sm font-semibold leading-snug line-clamp-2">{product.name}</div>
-          <div className="text-[11px] uppercase tracking-[0.12em] text-textSoft">
-            {product.category}
-          </div>
+          <div className="text-[11px] uppercase tracking-[0.12em] text-textSoft">{product.category}</div>
         </div>
       </div>
 
