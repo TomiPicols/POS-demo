@@ -17,7 +17,6 @@ Caja Feria puede ser útil para:
 - **Emprendedores** que montan puestos por días o semanas.
 - **Municipios** que organizan ferias y necesitan orden en las cajas.
 - **Colegios y centros comunitarios** que hacen kermesses o bingos.
-- **ONGs y fundaciones** que realizan ventas solidarias puntuales.
 
 La idea es entregar una herramienta liviana, clara y visualmente amigable para que cualquier persona pueda usarla en caja sin enredarse.
 
