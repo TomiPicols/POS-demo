@@ -97,14 +97,6 @@ const categoryEmoji = (category: string) => {
   return '\u{1F384}';
 };
 
-const todayRange = () => {
-  const start = new Date();
-  start.setHours(0, 0, 0, 0);
-  const end = new Date(start);
-  end.setDate(end.getDate() + 1);
-  return { from: start.toISOString(), to: end.toISOString() };
-};
-
 const navTitles: Record<string, string> = {
   overview: 'Inicio',
   sales: 'Ventas',
@@ -161,6 +153,8 @@ const FestivePOS = () => {
   const [editProductId, setEditProductId] = useState<string | null>(null);
   const [newProductModal, setNewProductModal] = useState(false);
   const [newProduct, setNewProduct] = useState({ name: '', price: 0, stock: 0, category: 'Otros' });
+  const [closingFrom, setClosingFrom] = useState<string | null>(null);
+  const [closingTo, setClosingTo] = useState<string | null>(null);
   const handleLogout = async () => {
     await supabase.auth.signOut();
     window.location.reload();
@@ -725,6 +719,37 @@ const FestivePOS = () => {
     }
   };
 
+  const computeClosingWindow = async () => {
+    try {
+      const { data: last } = await supabase
+        .from('cash_closures')
+        .select('created_at')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      let fromIso: string;
+      if (last?.created_at) {
+        fromIso = last.created_at;
+      } else {
+        const start = new Date();
+        start.setHours(0, 0, 0, 0);
+        fromIso = start.toISOString();
+      }
+      const toIso = new Date().toISOString();
+      setClosingFrom(fromIso);
+      setClosingTo(toIso);
+      return { from: fromIso, to: toIso };
+    } catch (err) {
+      console.error('No se pudo calcular ventana de cierre, se usa hoy.', err);
+      const start = new Date();
+      start.setHours(0, 0, 0, 0);
+      const toIso = new Date().toISOString();
+      setClosingFrom(start.toISOString());
+      setClosingTo(toIso);
+      return { from: start.toISOString(), to: toIso };
+    }
+  };
+
   const loadPendingSales = async () => {
     setLoadingPending(true);
     setPendingError(null);
@@ -809,7 +834,7 @@ const FestivePOS = () => {
     setLoadingClosing(true);
     setClosingError(null);
     try {
-      const { from, to } = todayRange();
+      const { from, to } = await computeClosingWindow();
       const { data, error } = await supabase
         .from('sales')
         .select('id, created_at, total_amount, payment_method, notes')
@@ -1960,8 +1985,11 @@ const FestivePOS = () => {
       const { data: userData } = await supabase.auth.getUser();
       const userId = userData?.user?.id ?? null;
 
-      // Totales por metodo basados en sale_items del dia
-      const { from, to } = todayRange();
+      // Ventana de cierre: desde último cierre hasta ahora
+      const window = closingFrom && closingTo ? { from: closingFrom, to: closingTo } : await computeClosingWindow();
+      const { from, to } = window;
+
+      // Totales por metodo basados en sale_items dentro de la ventana
       const { data: itemRows, error: itemError } = await supabase
         .from('sale_items')
         .select('total_price, sales!inner(payment_method, created_at)')
@@ -2000,8 +2028,3 @@ const FestivePOS = () => {
 };
 
 export default FestivePOS;
-
-
-
-
-
