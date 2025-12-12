@@ -133,7 +133,7 @@ const FestivePOS = () => {
   const [pendingSales, setPendingSales] = useState<SaleRow[]>([]);
   const [loadingPending, setLoadingPending] = useState(false);
   const [pendingError, setPendingError] = useState<string | null>(null);
-  const [pendingFilter, setPendingFilter] = useState<PaymentMethod | 'all'>('all');
+  const [pendingFilter] = useState<PaymentMethod>('pending');
   const [pendingDateFilter, setPendingDateFilter] = useState<'today' | '7d' | '30d' | 'all'>('today');
   const [pendingSearch, setPendingSearch] = useState('');
   const [pendingInfo, setPendingInfo] = useState<string | null>(null);
@@ -147,7 +147,6 @@ const FestivePOS = () => {
   const [offlineQueue, setOfflineQueue] = useState<OfflineOrder[]>([]);
   const [productUpdateError, setProductUpdateError] = useState<string | null>(null);
   const [productUpdateInfo, setProductUpdateInfo] = useState<string | null>(null);
-  const [userRole, setUserRole] = useState<string | null>(null);
   const [productForm, setProductForm] = useState<Record<string, { name: string; price: number; stock: number; category: string }>>({});
   const [productSearch, setProductSearch] = useState('');
   const [editProductId, setEditProductId] = useState<string | null>(null);
@@ -166,6 +165,21 @@ const FestivePOS = () => {
   const [showManualModal, setShowManualModal] = useState(false);
   const [manualForm, setManualForm] = useState({ name: '', price: 0, quantity: 1 });
   const [pendingNote, setPendingNote] = useState<string | null>(null);
+  const [editSaleModal, setEditSaleModal] = useState(false);
+  const [editSaleLoading, setEditSaleLoading] = useState(false);
+  const [editingSaleId, setEditingSaleId] = useState<number | null>(null);
+  const [editSaleItems, setEditSaleItems] = useState<OrderItem[]>([]);
+  const [originalSaleItems, setOriginalSaleItems] = useState<OrderItem[]>([]);
+  const [editSaleNote, setEditSaleNote] = useState('');
+  const [editSaleMethod, setEditSaleMethod] = useState<PaymentMethod>('cash');
+  const [editSaleError, setEditSaleError] = useState<string | null>(null);
+  const [editSelectProduct, setEditSelectProduct] = useState<string>('');
+  const [editSelectSearch, setEditSelectSearch] = useState('');
+  const [closingMasked, setClosingMasked] = useState(true);
+  const productPageSize = 10;
+  const [productPage, setProductPage] = useState(1);
+  const overviewPageSize = 10;
+  const [overviewPage, setOverviewPage] = useState(1);
 
   const filteredProducts = useMemo(() => {
     const byCategory =
@@ -176,6 +190,15 @@ const FestivePOS = () => {
     if (!q) return byCategory;
     return byCategory.filter((p) => p.name.toLowerCase().includes(q));
   }, [selectedCategory, productQuery, products]);
+
+  const productTotalPages = useMemo(
+    () => Math.max(1, Math.ceil(filteredProducts.length / productPageSize)),
+    [filteredProducts, productPageSize],
+  );
+  const productPageItems = useMemo(() => {
+    const start = (productPage - 1) * productPageSize;
+    return filteredProducts.slice(start, start + productPageSize);
+  }, [filteredProducts, productPage, productPageSize]);
 
   const categoryOptions = useMemo(() => {
     const set = new Set<string>();
@@ -276,14 +299,7 @@ const FestivePOS = () => {
     updateDraft((draft) => ({ ...draft, paymentMethod: method }));
   };
 
-  useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => {
-      const role = (data.user as any)?.app_metadata?.role ?? null;
-      setUserRole(role);
-    });
-  }, []);
-
-  const canEditProducts = userRole === 'admin';
+  const canEditProducts = true;
 
   const addDraft = () => {
     const maxNumber = drafts.reduce((max, d) => {
@@ -496,6 +512,7 @@ const FestivePOS = () => {
         logError('Fallo ajuste de stock', stockErr);
       }
 
+      await loadProducts();
       if (activeNav === 'overview') loadOverviewSales();
       if (activeNav === 'closing') loadClosingSales();
       if (activeNav === 'pending') loadPendingSales();
@@ -605,6 +622,14 @@ const FestivePOS = () => {
     if (activeNav !== 'pending') return;
     loadPendingSales();
   }, [activeNav, pendingFilter, pendingDateFilter, pendingSearch]);
+
+  useEffect(() => {
+    setProductPage(1);
+  }, [selectedCategory, productSearch]);
+
+  useEffect(() => {
+    setOverviewPage(1);
+  }, [overviewSales, overviewDateFilter, overviewMethodFilter]);
 
   // Suscripciones Realtime (sales) para refrescar overview/pending/closing
   useEffect(() => {
@@ -777,32 +802,298 @@ const FestivePOS = () => {
 
   const computeClosingWindow = async () => {
     try {
-      const { data: last } = await supabase
-        .from('cash_closures')
-        .select('created_at')
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      let fromIso: string;
-      if (last?.created_at) {
-        fromIso = last.created_at;
-      } else {
-        const start = new Date();
-        start.setHours(0, 0, 0, 0);
-        fromIso = start.toISOString();
+      const now = new Date();
+      const cutoffHour = 3; // el d?a de negocio va de 03:00 a 03:00
+      const businessStart = new Date(now);
+      if (businessStart.getHours() < cutoffHour) {
+        businessStart.setDate(businessStart.getDate() - 1);
       }
-      const toIso = new Date().toISOString();
+      businessStart.setHours(cutoffHour, 0, 0, 0);
+
+      const businessEnd = new Date(businessStart);
+      businessEnd.setDate(businessEnd.getDate() + 1);
+
+      const fromIso = businessStart.toISOString();
+      const toIso = businessEnd.toISOString();
       setClosingFrom(fromIso);
       setClosingTo(toIso);
       return { from: fromIso, to: toIso };
     } catch (err) {
-      console.error('No se pudo calcular ventana de cierre, se usa hoy.', err);
+      console.error('No se pudo calcular la ventana de cierre, se usa hoy.', err);
       const start = new Date();
       start.setHours(0, 0, 0, 0);
       const toIso = new Date().toISOString();
       setClosingFrom(start.toISOString());
       setClosingTo(toIso);
       return { from: start.toISOString(), to: toIso };
+    }
+  };
+
+  const openEditSale = async (saleId: number) => {
+    setEditSaleModal(true);
+    setEditSaleLoading(true);
+    setEditSaleError(null);
+    setEditingSaleId(saleId);
+    try {
+      const { data, error } = await supabase
+        .from('sales')
+        .select(
+          'id, payment_method, notes, sale_items (product_id, quantity, unit_price, products (name, category, default_price))',
+        )
+        .eq('id', saleId)
+        .single();
+      if (error || !data) throw error || new Error('Venta no encontrada');
+
+      const mapped =
+        data.sale_items?.map((si: any) => {
+          const pid = String(si.product_id);
+          const prod = products.find((p) => p.id === pid);
+          const baseName = prod?.name ?? si.products?.name ?? 'Producto';
+          const isManualName = baseName.toLowerCase().includes('manual');
+          const name = isManualName && data.notes ? data.notes : baseName;
+          const category = prod?.category ?? si.products?.category ?? '';
+          return {
+            id: pid,
+            name,
+            emoji: prod?.emoji ?? categoryEmoji(category),
+            price: Number(si.unit_price) || 0,
+            quantity: Number(si.quantity) || 0,
+          };
+        }) || [];
+
+      const combined = combineItems(mapped);
+      setOriginalSaleItems(combined);
+      setEditSaleItems(combined);
+      setEditSaleNote(data.notes || '');
+      setEditSaleMethod((data.payment_method as PaymentMethod) ?? 'cash');
+      if (combined.length && !editSelectProduct) setEditSelectProduct(combined[0].id);
+    } catch (err: any) {
+      setEditSaleError(err?.message ?? 'No se pudo abrir la venta.');
+    } finally {
+      setEditSaleLoading(false);
+    }
+  };
+
+  const closeEditSale = () => {
+    setEditSaleModal(false);
+    setEditingSaleId(null);
+    setEditSaleItems([]);
+    setOriginalSaleItems([]);
+    setEditSaleNote('');
+    setEditSaleMethod('cash');
+    setEditSaleError(null);
+  };
+
+  const updateEditItem = (id: string, field: 'quantity' | 'price', value: number) => {
+    setEditSaleItems((prev) =>
+      prev
+        .map((item) => {
+          if (item.id !== id) return item;
+          const v = Number.isNaN(value) ? 0 : value;
+          return field === 'quantity' ? { ...item, quantity: Math.max(0, v) } : { ...item, price: Math.max(0, v) };
+        })
+        .filter((i) => i.quantity > 0),
+    );
+  };
+
+  const addProductToEdit = (productId: string) => {
+    if (!productId) return;
+    const prod = products.find((p) => p.id === productId);
+    const exists = editSaleItems.find((i) => i.id === productId);
+    if (exists) {
+      updateEditItem(productId, 'quantity', exists.quantity + 1);
+      return;
+    }
+    setEditSaleItems((prev) => [
+      ...prev,
+      {
+        id: productId,
+        name: prod?.name ?? 'Producto',
+        emoji: prod?.emoji ?? categoryEmoji(prod?.category ?? ''),
+        price: prod?.price ?? 0,
+        quantity: 1,
+      },
+    ]);
+  };
+
+  const combineItems = (arr: OrderItem[]): OrderItem[] => {
+    const map = new Map<string, OrderItem>();
+    arr.forEach((item) => {
+      const existing = map.get(item.id);
+      if (existing) {
+        map.set(item.id, { ...existing, quantity: existing.quantity + item.quantity });
+      } else {
+        map.set(item.id, item);
+      }
+    });
+    return Array.from(map.values());
+  };
+
+  const saveEditedSale = async () => {
+    if (!canEditProducts || !editingSaleId) return;
+    const cleanItems = editSaleItems.filter((i) => i.quantity > 0);
+    if (!cleanItems.length) {
+      setEditSaleError('Debe haber al menos un producto.');
+      return;
+    }
+
+    setEditSaleLoading(true);
+    setEditSaleError(null);
+
+    try {
+      const originalMap = new Map<string, number>();
+      originalSaleItems.forEach((i) => originalMap.set(i.id, (originalMap.get(i.id) ?? 0) + i.quantity));
+      const newMap = new Map<string, number>();
+      cleanItems.forEach((i) => newMap.set(i.id, (newMap.get(i.id) ?? 0) + i.quantity));
+
+      const deltas = new Map<string, number>();
+      const allIds = new Set([...originalMap.keys(), ...newMap.keys()]);
+      allIds.forEach((pid) => {
+        const delta = (newMap.get(pid) ?? 0) - (originalMap.get(pid) ?? 0);
+        deltas.set(pid, delta);
+      });
+
+      const consumeIds = Array.from(deltas.entries())
+        .filter(([, delta]) => delta > 0)
+        .map(([id]) => Number(id));
+
+      if (consumeIds.length) {
+        const { data: stockRows, error: stockErr } = await supabase
+          .from('products')
+          .select('id, stock')
+          .in('id', consumeIds);
+        if (stockErr) throw stockErr;
+        const stockMap = new Map<number, number>();
+        (stockRows || []).forEach((r: any) => stockMap.set(r.id, Number(r.stock ?? 0)));
+        const lacking = consumeIds.filter((pid) => (stockMap.get(pid) ?? 0) < (deltas.get(String(pid)) ?? 0));
+        if (lacking.length) {
+          setEditSaleError(`Stock insuficiente para: ${lacking.join(', ')}`);
+          setEditSaleLoading(false);
+          return;
+        }
+      }
+
+      await supabase.from('sale_items').delete().eq('sale_id', editingSaleId);
+      const itemsPayload = cleanItems.map((i) => ({
+        sale_id: editingSaleId,
+        product_id: Number(i.id),
+        quantity: i.quantity,
+        unit_price: i.price,
+        total_price: i.price * i.quantity,
+      }));
+      const { error: insErr } = await supabase.from('sale_items').insert(itemsPayload);
+      if (insErr) throw insErr;
+
+      const deltaIds = Array.from(deltas.keys()).map((id) => Number(id));
+      if (deltaIds.length) {
+        const { data: stockRows2, error: stockErr2 } = await supabase
+          .from('products')
+          .select('id, stock')
+          .in('id', deltaIds);
+        if (stockErr2) throw stockErr2;
+        const stockMap2 = new Map<number, number>();
+        (stockRows2 || []).forEach((r: any) => stockMap2.set(r.id, Number(r.stock ?? 0)));
+        const stockUpdates = deltaIds.map(async (pid) => {
+          const delta = deltas.get(String(pid)) ?? 0;
+          if (delta === 0) return;
+          const current = stockMap2.get(pid) ?? 0;
+          const newStock = current - delta;
+          await supabase.from('products').update({ stock: newStock }).eq('id', pid);
+        });
+        await Promise.all(stockUpdates);
+      }
+
+      const totalAmount = cleanItems.reduce((acc, i) => acc + i.price * i.quantity, 0);
+      const { data: userData } = await supabase.auth.getUser();
+      const paidFields =
+        editSaleMethod === 'pending'
+          ? { paid_at: null, paid_by: null, paid_method: null }
+          : {
+              paid_at: new Date().toISOString(),
+              paid_by: userData.user?.id ?? null,
+              paid_method: editSaleMethod,
+            };
+
+      const { error: updErr } = await supabase
+        .from('sales')
+        .update({
+          payment_method: editSaleMethod,
+          notes: editSaleNote || null,
+          total_amount: totalAmount,
+          ...paidFields,
+        })
+        .eq('id', editingSaleId);
+      if (updErr) throw updErr;
+
+      setOriginalSaleItems(cleanItems);
+      setEditSaleError(null);
+      closeEditSale();
+      if (activeNav === 'overview') loadOverviewSales();
+      if (activeNav === 'closing') loadClosingSales();
+      if (activeNav === 'pending') loadPendingSales();
+      await loadProducts();
+    } catch (err: any) {
+      setEditSaleError(err?.message ?? 'No se pudo guardar la venta.');
+    } finally {
+      setEditSaleLoading(false);
+    }
+  };
+
+  const deleteSaleWithRestock = async (saleId: number) => {
+    setEditSaleLoading(true);
+    setEditSaleError(null);
+    try {
+      let items = originalSaleItems;
+      if (!items.length || editingSaleId !== saleId) {
+        const { data } = await supabase
+          .from('sale_items')
+          .select('product_id, quantity, unit_price')
+          .eq('sale_id', saleId);
+        const rawItems =
+          data?.map((si: any) => ({
+            id: String(si.product_id),
+            name: '',
+            emoji: '🧾',
+            price: Number(si.unit_price) || 0,
+            quantity: Number(si.quantity) || 0,
+          })) || [];
+        items = combineItems(rawItems);
+      }
+
+      const productIds = items.map((i) => Number(i.id)).filter((id) => !Number.isNaN(id));
+      if (productIds.length) {
+        const { data: stockRows, error: stockErr } = await supabase
+          .from('products')
+          .select('id, stock, name')
+          .in('id', productIds);
+        if (stockErr) throw stockErr;
+        const stockMap = new Map<number, { stock: number; name: string }>();
+        (stockRows || []).forEach((r: any) =>
+          stockMap.set(r.id, { stock: Number(r.stock ?? 0), name: String(r.name ?? '') }),
+        );
+        const updates = productIds.map(async (pid) => {
+          const meta = stockMap.get(pid);
+          if (!meta) return;
+          const isManual = meta.name.toLowerCase().includes('manual');
+          if (isManual) return; // no ajustar stock de productos usados solo como placeholder de venta rapida
+          const qty = items.filter((i) => Number(i.id) === pid).reduce((acc, i) => acc + i.quantity, 0);
+          const current = meta.stock ?? 0;
+          await supabase.from('products').update({ stock: current + qty }).eq('id', pid);
+        });
+        await Promise.all(updates);
+      }
+
+      await supabase.from('sale_items').delete().eq('sale_id', saleId);
+      await supabase.from('sales').delete().eq('id', saleId);
+      closeEditSale();
+      if (activeNav === 'overview') loadOverviewSales();
+      if (activeNav === 'closing') loadClosingSales();
+      if (activeNav === 'pending') loadPendingSales();
+      await loadProducts();
+    } catch (err: any) {
+      setEditSaleError(err?.message ?? 'No se pudo eliminar la venta.');
+    } finally {
+      setEditSaleLoading(false);
     }
   };
 
@@ -831,11 +1122,7 @@ const FestivePOS = () => {
         query.gte('created_at', from.toISOString()).lte('created_at', now.toISOString());
       }
 
-      if (pendingFilter !== 'all') {
-        query.eq('payment_method', pendingFilter);
-      } else {
-        query.eq('payment_method', 'pending');
-      }
+      query.eq('payment_method', 'pending');
 
       const search = pendingSearch.trim();
       if (search) {
@@ -937,6 +1224,15 @@ const FestivePOS = () => {
     [closingSales],
   );
 
+  const overviewTotalPages = useMemo(
+    () => Math.max(1, Math.ceil(overviewSales.length / overviewPageSize)),
+    [overviewSales, overviewPageSize],
+  );
+  const overviewPageItems = useMemo(() => {
+    const start = (overviewPage - 1) * overviewPageSize;
+    return overviewSales.slice(start, start + overviewPageSize);
+  }, [overviewSales, overviewPage, overviewPageSize]);
+
   const exportClosingCSV = () => {
     const headers = ['Fecha', 'Monto', 'Metodo', 'Notas'];
     const rows = closingSales.map((s) => {
@@ -1033,23 +1329,12 @@ const FestivePOS = () => {
           </div>
           <div className="flex flex-wrap items-center gap-3 text-sm">
             <SelectField
-              value={pendingFilter}
-              onChange={(val) => setPendingFilter(val as PaymentMethod | 'all')}
-              options={[
-                { value: 'all', label: 'Solo pendientes' },
-                { value: 'cash', label: 'Efectivo' },
-                
-                { value: 'transfer', label: 'Transferencia' },
-                { value: 'pending', label: 'Pendiente' },
-              ]}
-            />
-            <SelectField
               value={pendingDateFilter}
               onChange={(val) => setPendingDateFilter(val as 'today' | '7d' | '30d' | 'all')}
               options={[
                 { value: 'today', label: 'Hoy' },
-                { value: '7d', label: '?ltimos 7 d?as' },
-                { value: '30d', label: '?ltimos 30 d?as' },
+                { value: '7d', label: 'Ultimos 7 dias' },
+                { value: '30d', label: 'Ultimos 30 dias' },
                 { value: 'all', label: 'Todo' },
               ]}
             />
@@ -1086,9 +1371,9 @@ const FestivePOS = () => {
               {pendingDateFilter === 'today'
                 ? 'Hoy'
                 : pendingDateFilter === '7d'
-                  ? '?ltimos 7 d?as'
+                  ? 'Ultimos 7 dias'
                   : pendingDateFilter === '30d'
-                    ? '?ltimos 30 d?as'
+                    ? 'Ultimos 30 dias'
                     : 'Todo'}
             </div>
           </div>
@@ -1428,7 +1713,7 @@ const FestivePOS = () => {
               options={[
                 { value: 'today', label: 'Hoy' },
                 { value: 'yesterday', label: 'Ayer' },
-                { value: 'last7', label: '?ltimos 7' },
+                { value: 'last7', label: 'Ultimos 7' },
                 { value: 'all', label: 'Todas' },
               ]}
             />
@@ -1463,7 +1748,7 @@ const FestivePOS = () => {
               </tr>
             </thead>
             <tbody>
-              {overviewSales.map((s) => (
+              {overviewPageItems.map((s) => (
                 <tr key={s.id} className="border-t border-borderSoft/70">
                   <td className="py-2 pr-4">
                     {new Date(s.created_at).toLocaleString('es-CL', {
@@ -1487,6 +1772,27 @@ const FestivePOS = () => {
               )}
             </tbody>
           </table>
+          {overviewSales.length > overviewPageSize && (
+            <div className="flex items-center justify-end gap-2 text-xs text-textSoft mt-3">
+              <button
+                onClick={() => setOverviewPage((p) => Math.max(1, p - 1))}
+                disabled={overviewPage === 1}
+                className="h-8 px-3 rounded-lg border border-borderSoft bg-panel hover:border-accent/40 disabled:opacity-50 disabled:cursor-not-allowed transition"
+              >
+                Anterior
+              </button>
+              <div className="text-sm font-medium">
+                {overviewPage} / {overviewTotalPages}
+              </div>
+              <button
+                onClick={() => setOverviewPage((p) => Math.min(overviewTotalPages, p + 1))}
+                disabled={overviewPage === overviewTotalPages}
+                className="h-8 px-3 rounded-lg border border-borderSoft bg-panel hover:border-accent/40 disabled:opacity-50 disabled:cursor-not-allowed transition"
+              >
+                Siguiente
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -1499,9 +1805,19 @@ const FestivePOS = () => {
           <div className="text-[10px] text-textSoft uppercase tracking-[0.16em]">Ventas hoy</div>
           <div className="text-xl font-bold">{closingSales.length}</div>
         </div>
-        <div className="bg-card border border-borderSoft rounded-xl p-3 shadow-soft space-y-1">
-          <div className="text-[10px] text-textSoft uppercase tracking-[0.16em]">Total del dia</div>
-          <div className="text-xl font-bold">${formatCLP(closingTotal)}</div>
+        <div className="bg-card border border-borderSoft rounded-xl p-3 shadow-soft space-y-2">
+          <div className="flex items-center justify-between">
+            <div className="text-[10px] text-textSoft uppercase tracking-[0.16em]">Total del dia</div>
+            <button
+              onClick={() => setClosingMasked((prev) => !prev)}
+              className="text-[10px] px-2 py-1 rounded-full border border-borderSoft bg-panel hover:border-accent/40 transition"
+            >
+              {closingMasked ? 'Mostrar' : 'Ocultar'}
+            </button>
+          </div>
+          <div className={`text-xl font-bold ${closingMasked ? 'blur-sm select-none' : ''}`}>
+            ${formatCLP(closingTotal)}
+          </div>
         </div>
       </div>
 
@@ -1541,6 +1857,7 @@ const FestivePOS = () => {
                   <th className="py-2 pr-4">Monto</th>
                   <th className="py-2 pr-4">Metodo</th>
                   <th className="py-2 pr-4">Notas</th>
+                  <th className="py-2 pr-4">Acciones</th>
                 </tr>
               </thead>
               <tbody>
@@ -1555,11 +1872,21 @@ const FestivePOS = () => {
                     <td className="py-2 pr-4 font-semibold">${formatCLP(s.total_amount)}</td>
                     <td className="py-2 pr-4 uppercase text-xs">{getPaymentLabel(s.payment_method)}</td>
                     <td className="py-2 pr-4 text-textSoft">{s.notes || '?'}</td>
+                    <td className="py-2 pr-4">
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => openEditSale(s.id)}
+                          className="h-8 px-3 rounded-lg border border-borderSoft bg-panel hover:border-accent/40 text-xs transition"
+                        >
+                          Editar
+                        </button>
+                      </div>
+                    </td>
                   </tr>
                 ))}
                 {!closingSales.length && !loadingClosing && (
                   <tr>
-                    <td className="py-4 text-xs text-textSoft" colSpan={4}>
+                    <td className="py-4 text-xs text-textSoft" colSpan={5}>
                       Aun no hay ventas hoy.
                     </td>
                   </tr>
@@ -1875,9 +2202,6 @@ const FestivePOS = () => {
           )}
 
           {(() => {
-            const filtered = products
-              .filter((p) => (selectedCategory === 'Todo' ? true : p.category === selectedCategory))
-              .filter((p) => p.name.toLowerCase().includes(productSearch.trim().toLowerCase()));
             return (
               <div className="overflow-x-auto">
                 <table className="min-w-full text-sm">
@@ -1891,8 +2215,9 @@ const FestivePOS = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {filtered.map((p) => {
-                      const form = productForm[p.id] ?? { name: p.name, price: p.price, stock: p.stock ?? 0, category: p.category };
+                    {productPageItems.map((p) => {
+                      const form =
+                        productForm[p.id] ?? { name: p.name, price: p.price, stock: p.stock ?? 0, category: p.category };
                       return (
                         <tr key={p.id} className="border-b border-borderSoft/50">
                           <td className="py-2 pr-3">{form.name}</td>
@@ -1912,8 +2237,29 @@ const FestivePOS = () => {
                     })}
                   </tbody>
                 </table>
-                {!filtered.length && (
+                {!filteredProducts.length && (
                   <div className="text-sm text-textSoft py-3">Sin resultados para esta busqueda.</div>
+                )}
+                {filteredProducts.length > productPageSize && (
+                  <div className="flex items-center justify-end gap-2 text-xs text-textSoft mt-3">
+                    <button
+                      onClick={() => setProductPage((p) => Math.max(1, p - 1))}
+                      disabled={productPage === 1}
+                      className="h-8 px-3 rounded-lg border border-borderSoft bg-panel hover:border-accent/40 disabled:opacity-50 disabled:cursor-not-allowed transition"
+                    >
+                      Anterior
+                    </button>
+                    <div className="text-sm font-medium">
+                      {productPage} / {productTotalPages}
+                    </div>
+                    <button
+                      onClick={() => setProductPage((p) => Math.min(productTotalPages, p + 1))}
+                      disabled={productPage === productTotalPages}
+                      className="h-8 px-3 rounded-lg border border-borderSoft bg-panel hover:border-accent/40 disabled:opacity-50 disabled:cursor-not-allowed transition"
+                    >
+                      Siguiente
+                    </button>
+                  </div>
                 )}
               </div>
             );
@@ -1930,7 +2276,7 @@ const FestivePOS = () => {
         onToggleCollapse={() => setSidebarCollapsed((prev) => !prev)}
         onNavigate={setActiveNav}
         onLogout={handleLogout}
-        allowedKeys={canEditProducts ? ['overview', 'sales', 'closing', 'pending', 'products'] : ['overview', 'sales', 'closing', 'pending']}
+        allowedKeys={['overview', 'sales', 'closing', 'pending', 'products']}
       />
 
       <div
@@ -1981,6 +2327,142 @@ const FestivePOS = () => {
           {activeNav === 'products' && productsContent}
         </div>
       </div>
+
+      {editSaleModal && (
+        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center px-4">
+          <div className="bg-white w-full max-w-3xl md:max-w-4xl rounded-2xl shadow-soft p-5 space-y-4 relative">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-lg font-semibold">Editar venta</div>
+                <div className="text-sm text-textSoft">
+                  Ajusta productos, precios o método. Guardar devolverá/consumirá stock según el cambio.
+                </div>
+              </div>
+            </div>
+
+            {editSaleError && <div className="text-sm text-accent">{editSaleError}</div>}
+
+            <div className="space-y-3 max-h-80 overflow-auto pr-1">
+              {editSaleItems.map((item, idx) => (
+                <div
+                  key={`${item.id}-${idx}`}
+                  className="flex items-center gap-3 rounded-xl border border-borderSoft bg-panelAlt px-3 py-2"
+                >
+                  <div className="w-9 h-9 rounded-lg bg-panel border border-borderSoft/70 flex items-center justify-center text-lg">
+                    {item.emoji}
+                  </div>
+                  <div className="flex-1">
+                    <div className="text-sm font-semibold">{item.name}</div>
+                    <div className="flex gap-3 items-center text-xs text-textSoft">
+                      <label className="flex items-center gap-1">
+                        Cant.:
+                        <input
+                          type="number"
+                          value={item.quantity}
+                          min={0}
+                          onChange={(e) => updateEditItem(item.id, 'quantity', Number(e.target.value))}
+                          className="w-16 h-8 rounded border border-borderSoft px-2 text-sm"
+                        />
+                      </label>
+                      <div className="flex items-center gap-1">
+                        <span className="text-textSoft">Precio:</span>
+                        <span className="font-semibold text-text">${item.price.toLocaleString('es-CL')}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {!editSaleItems.length && <div className="text-sm text-textSoft">Sin productos.</div>}
+            </div>
+
+            <div className="flex flex-col md:flex-row gap-2 md:items-center">
+              <input
+                value={editSelectSearch}
+                onChange={(e) => setEditSelectSearch(e.target.value)}
+                placeholder="Buscar producto..."
+                className="h-10 rounded-lg border border-borderSoft px-3 text-sm bg-white md:w-48"
+              />
+              <select
+                value={editSelectProduct}
+                onChange={(e) => setEditSelectProduct(e.target.value)}
+                className="h-10 rounded-lg border border-borderSoft px-3 text-sm bg-white flex-1"
+              >
+                <option value="">Selecciona producto</option>
+                {products
+                  .filter((p) => p.name.toLowerCase().includes(editSelectSearch.toLowerCase()))
+                  .map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name} (${formatCLP(p.price)} - stock {p.stock})
+                    </option>
+                  ))}
+              </select>
+              <button
+                className="h-10 px-3 rounded-lg bg-accent text-white text-sm font-semibold"
+                onClick={() => addProductToEdit(editSelectProduct)}
+                disabled={!editSelectProduct}
+              >
+                Agregar producto
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+              <div className="space-y-1">
+                <label className="text-textSoft">Método de pago</label>
+                <div className="flex gap-2">
+                  {(['cash', 'transfer', 'pending'] as const).map((m) => (
+                    <button
+                      key={m}
+                      onClick={() => setEditSaleMethod(m)}
+                      className={`h-9 px-3 rounded-full border text-sm ${
+                        editSaleMethod === m
+                          ? 'bg-accent text-white border-accent'
+                          : 'bg-panel border-borderSoft text-text'
+                      }`}
+                    >
+                      {getPaymentLabel(m)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="space-y-1">
+                <label className="text-textSoft">Notas</label>
+                <input
+                  value={editSaleNote}
+                  onChange={(e) => setEditSaleNote(e.target.value)}
+                  className="w-full h-10 rounded-lg border border-borderSoft px-3 bg-white text-sm"
+                  placeholder="Nombre del cliente o detalle"
+                />
+              </div>
+            </div>
+
+            <div className="flex flex-col md:flex-row justify-end gap-2">
+              <button
+                className="h-10 px-4 rounded-lg border border-borderSoft text-sm"
+                onClick={closeEditSale}
+                disabled={editSaleLoading}
+              >
+                Cancelar
+              </button>
+              <div className="flex items-center gap-3 md:ml-auto">
+                <button
+                  className="h-10 px-4 rounded-lg border border-[#c0392b] bg-[#c0392b] text-white text-sm font-semibold hover:bg-[#a83226] transition"
+                  onClick={() => editingSaleId && deleteSaleWithRestock(editingSaleId)}
+                  disabled={editSaleLoading || !editingSaleId}
+                >
+                  Eliminar venta
+                </button>
+                <button
+                  className="h-10 px-4 rounded-lg bg-accent text-white text-sm font-semibold shadow-soft disabled:opacity-60"
+                  onClick={saveEditedSale}
+                  disabled={editSaleLoading}
+                >
+                  {editSaleLoading ? 'Guardando...' : 'Guardar cambios'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {activeNav === 'sales' && (
         <>
@@ -2102,7 +2584,7 @@ const FestivePOS = () => {
       <MobileNav
         active={activeNav}
         onNavigate={setActiveNav}
-        allowedKeys={canEditProducts ? ['overview', 'sales', 'closing', 'pending', 'products'] : ['overview', 'sales', 'closing', 'pending']}
+        allowedKeys={['overview', 'sales', 'closing', 'pending', 'products']}
       />
     </div>
   );
