@@ -129,6 +129,7 @@ const FestivePOS = () => {
   const [savingClosing, setSavingClosing] = useState(false);
   const [closingNotes, setClosingNotes] = useState('');
   const [cashCounted, setCashCounted] = useState('');
+  const [transferCounted, setTransferCounted] = useState('');
   const [pendingSales, setPendingSales] = useState<SaleRow[]>([]);
   const [loadingPending, setLoadingPending] = useState(false);
   const [pendingError, setPendingError] = useState<string | null>(null);
@@ -164,6 +165,7 @@ const FestivePOS = () => {
   const paymentMethod = currentDraft?.paymentMethod || 'cash';
   const [showManualModal, setShowManualModal] = useState(false);
   const [manualForm, setManualForm] = useState({ name: '', price: 0, quantity: 1 });
+  const [pendingNote, setPendingNote] = useState<string | null>(null);
 
   const filteredProducts = useMemo(() => {
     const byCategory =
@@ -219,7 +221,7 @@ const FestivePOS = () => {
   const addManualItem = () => {
     if (!currentDraft) return;
     if (!manualForm.name.trim()) {
-      setOrderError('Ingresa un nombre para la Venta rápida.');
+      setOrderError('Ingresa un nombre para la venta rápida.');
       return;
     }
     if (manualForm.price <= 0 || manualForm.quantity <= 0) {
@@ -268,6 +270,9 @@ const FestivePOS = () => {
   const total = subtotal;
   const changePaymentMethod = (method: PaymentMethod) => {
     if (!currentDraft) return;
+    if (method !== 'pending') {
+      setPendingNote(null);
+    }
     updateDraft((draft) => ({ ...draft, paymentMethod: method }));
   };
 
@@ -532,7 +537,7 @@ const FestivePOS = () => {
     const summaryNote = orderItems.map((item) => `${item.quantity}x ${item.name}`).join(' - ');
     const notes =
       paymentMethod === 'pending'
-        ? `PENDIENTE - ${summaryNote || 'Sin detalle'}`
+        ? `${summaryNote || 'Pendiente'}${pendingNote && pendingNote.trim() ? ` - Nota: ${pendingNote.trim()}` : ''}`
         : summaryNote || null;
 
     try {
@@ -552,12 +557,13 @@ const FestivePOS = () => {
         };
         setOfflineQueue((prev) => [...prev, queued]);
         updateDraft((draft) => ({ ...draft, items: [] }));
-        setOrderError('Sin conexion. Pedido guardado offline y se enviara al reconectar.');
+        setOrderError('Sin conexión. Pedido guardado offline y se enviara al reconectar.');
         return true;
       }
       return false;
     } finally {
       setSavingOrder(false);
+      setPendingNote(null);
     }
   };
 
@@ -637,7 +643,7 @@ const FestivePOS = () => {
     };
   }, [activeNav, overviewDateFilter, overviewMethodFilter, pendingFilter, pendingDateFilter, pendingSearch]);
 
-  // Polling m�s corto (15s) como respaldo multi-puesto
+  // Polling m?s corto (15s) como respaldo multi-puesto
   useEffect(() => {
     const interval = setInterval(() => {
       if (activeNav === 'overview') loadOverviewSales();
@@ -1042,8 +1048,8 @@ const FestivePOS = () => {
               onChange={(val) => setPendingDateFilter(val as 'today' | '7d' | '30d' | 'all')}
               options={[
                 { value: 'today', label: 'Hoy' },
-                { value: '7d', label: '�ltimos 7 d�as' },
-                { value: '30d', label: '�ltimos 30 d�as' },
+                { value: '7d', label: '?ltimos 7 d?as' },
+                { value: '30d', label: '?ltimos 30 d?as' },
                 { value: 'all', label: 'Todo' },
               ]}
             />
@@ -1080,9 +1086,9 @@ const FestivePOS = () => {
               {pendingDateFilter === 'today'
                 ? 'Hoy'
                 : pendingDateFilter === '7d'
-                  ? '�ltimos 7 d�as'
+                  ? '?ltimos 7 d?as'
                   : pendingDateFilter === '30d'
-                    ? '�ltimos 30 d�as'
+                    ? '?ltimos 30 d?as'
                     : 'Todo'}
             </div>
           </div>
@@ -1196,12 +1202,12 @@ const FestivePOS = () => {
             onClick={() => setPendingModalSale(null)}
             className="w-9 h-9 rounded-full border border-borderSoft text-textSoft hover:text-text"
           >
-            �
+            ?
           </button>
         </div>
 
         <div className="space-y-2">
-          <div className="text-sm font-semibold">M�todo de pago</div>
+          <div className="text-sm font-semibold">M?todo de pago</div>
           <div className="grid grid-cols-3 gap-2">
             {(['cash', 'transfer'] as const).map((method) => {
               const active = pendingModalMethod === method;
@@ -1261,6 +1267,9 @@ const FestivePOS = () => {
   const cashCountedNumber = Number.parseInt(cashCounted || '0', 10) || 0;
   const cashExpected = closingTotals.cash || 0;
   const cashDiff = cashCountedNumber - cashExpected;
+  const transferCountedNumber = Number.parseInt(transferCounted || '0', 10) || 0;
+  const transferExpected = closingTotals.transfer || 0;
+  const transferDiff = transferCountedNumber - transferExpected;
   const todayLabel = useMemo(
     () =>
       new Intl.DateTimeFormat('es-CL', {
@@ -1331,7 +1340,7 @@ const FestivePOS = () => {
           onClick={() => setShowManualModal(true)}
           className="h-9 px-3 rounded-full text-sm bg-[#c0392b] text-white font-semibold shadow-soft hover:shadow-card transition"
         >
-          Venta rápida
+          Venta rapida
         </button>
         <button
           onClick={deleteDraft}
@@ -1343,7 +1352,7 @@ const FestivePOS = () => {
 
       {isOffline && (
         <div className="w-full bg-amber-100 border border-amber-300 text-amber-800 text-sm rounded-xl px-3 py-2 shadow-soft">
-          Sin conexi�n: los cambios se intentar�n cuando vuelva la red.
+          Sin conexi?n: los cambios se intentar?n cuando vuelva la red.
         </div>
       )}
 
@@ -1374,12 +1383,14 @@ const FestivePOS = () => {
             tax={tax}
             total={total}
             paymentMethod={paymentMethod}
+            pendingNote={pendingNote}
             saving={savingOrder}
             error={orderError}
             orderLabel={currentDraft?.label}
             onPaymentChange={changePaymentMethod}
             onUpdateQuantity={updateQuantity}
             onConfirm={confirmOrder}
+            onPendingNoteChange={setPendingNote}
           />
         </div>
 
@@ -1417,7 +1428,7 @@ const FestivePOS = () => {
               options={[
                 { value: 'today', label: 'Hoy' },
                 { value: 'yesterday', label: 'Ayer' },
-                { value: 'last7', label: '�ltimos 7' },
+                { value: 'last7', label: '?ltimos 7' },
                 { value: 'all', label: 'Todas' },
               ]}
             />
@@ -1464,7 +1475,7 @@ const FestivePOS = () => {
                   </td>
                   <td className="py-2 pr-4 font-semibold">${formatCLP(s.total_amount)}</td>
                   <td className="py-2 pr-4 uppercase text-xs">{getPaymentLabel(s.payment_method)}</td>
-                  <td className="py-2 pr-4 text-textSoft">{s.notes || '�'}</td>
+                  <td className="py-2 pr-4 text-textSoft">{s.notes || '?'}</td>
                 </tr>
               ))}
               {!overviewSales.length && !loadingOverview && (
@@ -1494,7 +1505,7 @@ const FestivePOS = () => {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6 items-start">
+      <div className="grid grid-cols-1 xl:grid-cols-[1fr_320px] gap-6 items-start">
         <div className="bg-panel border border-borderSoft rounded-2xl p-5 shadow-soft space-y-4">
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div>
@@ -1543,7 +1554,7 @@ const FestivePOS = () => {
                     </td>
                     <td className="py-2 pr-4 font-semibold">${formatCLP(s.total_amount)}</td>
                     <td className="py-2 pr-4 uppercase text-xs">{getPaymentLabel(s.payment_method)}</td>
-                    <td className="py-2 pr-4 text-textSoft">{s.notes || '�'}</td>
+                    <td className="py-2 pr-4 text-textSoft">{s.notes || '?'}</td>
                   </tr>
                 ))}
                 {!closingSales.length && !loadingClosing && (
@@ -1582,26 +1593,19 @@ const FestivePOS = () => {
         <div className="bg-card border border-borderSoft rounded-2xl p-5 shadow-soft space-y-4">
           <div className="text-lg font-semibold">Cierre de caja</div>
 
-          <div className="space-y-2 text-sm">
-            <div className="text-xs text-textSoft uppercase tracking-[0.12em]">Desglose por método</div>
-            <div className="grid grid-cols-2 gap-2">
-              {(['cash', 'transfer', 'pending'] as const).map((method) => (
-                <div
-                  key={method}
-                  className="flex items-center justify-between rounded-lg bg-panelAlt border border-borderSoft px-3 py-2"
-                >
-                  <span className="text-textSoft">{getPaymentLabel(method)}</span>
-                  <span className="font-semibold">${formatCLP(closingTotals[method])}</span>
-                </div>
-              ))}
-            </div>
+          <div className="grid grid-cols-2 gap-2 text-sm">
+            {(['cash', 'transfer', 'pending'] as const).map((method) => (
+              <div
+                key={method}
+                className="flex items-center justify-between rounded-lg bg-panelAlt border border-borderSoft px-3 py-2"
+              >
+                <span className="text-textSoft">{getPaymentLabel(method)}</span>
+                <span className="font-semibold">${formatCLP(closingTotals[method])}</span>
+              </div>
+            ))}
           </div>
 
-          <div className="space-y-2 text-sm">
-            <div className="flex justify-between text-textSoft">
-              <span>Efectivo esperado</span>
-              <span>${formatCLP(cashExpected)}</span>
-            </div>
+          <div className="space-y-3 text-sm">
             <div className="flex items-center justify-between gap-3">
               <label className="text-textSoft text-sm" htmlFor="cashCounted">
                 Efectivo contado
@@ -1612,13 +1616,32 @@ const FestivePOS = () => {
                 value={cashCounted}
                 onChange={(e) => setCashCounted(e.target.value)}
                 className="h-10 w-40 rounded-lg border border-borderSoft bg-panelAlt px-3 text-sm text-text focus:outline-none focus:ring-2 focus:ring-accent/30 placeholder:text-textSoft"
-                placeholder="$0"
+                placeholder={`$${formatCLP(cashExpected)}`}
+              />
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <label className="text-textSoft text-sm" htmlFor="transferCounted">
+                Transferencias contadas
+              </label>
+              <input
+                id="transferCounted"
+                type="number"
+                value={transferCounted}
+                onChange={(e) => setTransferCounted(e.target.value)}
+                className="h-10 w-40 rounded-lg border border-borderSoft bg-panelAlt px-3 text-sm text-text focus:outline-none focus:ring-2 focus:ring-accent/30 placeholder:text-textSoft"
+                placeholder={`$${formatCLP(transferExpected)}`}
               />
             </div>
             <div className="flex justify-between font-semibold">
-              <span>Diferencia</span>
+              <span>Diferencia efectivo</span>
               <span className={cashDiff === 0 ? 'text-text' : cashDiff > 0 ? 'text-green-700' : 'text-accent'}>
                 ${formatCLP(cashDiff)}
+              </span>
+            </div>
+            <div className="flex justify-between font-semibold">
+              <span>Diferencia transferencias</span>
+              <span className={transferDiff === 0 ? 'text-text' : transferDiff > 0 ? 'text-green-700' : 'text-accent'}>
+                ${formatCLP(transferDiff)}
               </span>
             </div>
           </div>
@@ -1940,7 +1963,7 @@ const FestivePOS = () => {
               <button
                 onClick={handleLogout}
                 className="w-9 h-9 rounded-full border border-borderSoft bg-panel text-textSoft hover:border-accent/50 hover:text-accent transition shadow-soft flex items-center justify-center"
-                aria-label="Cerrar sesi�n"
+                aria-label="Cerrar sesion"
               >
                 <svg viewBox="0 0 24 24" className="w-4 h-4" stroke="currentColor" fill="none" strokeWidth="1.6">
                   <path d="M10 17l-5-5 5-5" />
@@ -1988,7 +2011,7 @@ const FestivePOS = () => {
                     onClick={() => setShowOrderMobile(false)}
                     className="text-sidebarMuted text-lg px-2"
                   >
-                    �
+                    x
                   </button>
                 </div>
                 <div className="overflow-y-auto max-h-[50vh] pr-1">
@@ -1998,6 +2021,7 @@ const FestivePOS = () => {
                     tax={tax}
                     total={total}
                     paymentMethod={paymentMethod}
+                    pendingNote={pendingNote}
                     saving={savingOrder}
                     error={orderError}
                     onPaymentChange={changePaymentMethod}
@@ -2008,6 +2032,7 @@ const FestivePOS = () => {
                       return success;
                     }}
                     orderLabel={currentDraft?.label}
+                    onPendingNoteChange={setPendingNote}
                   />
                 </div>
               </div>
@@ -2020,7 +2045,7 @@ const FestivePOS = () => {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-sm p-4">
           <div className="w-full max-w-md rounded-2xl bg-card border border-borderSoft shadow-card p-5 space-y-4">
             <div>
-              <div className="text-sm font-semibold">Venta rápida</div>
+              <div className="text-sm font-semibold">Venta rapida</div>
               <div className="text-xs text-textSoft">Agrega un producto libre al pedido actual</div>
             </div>
             <div className="space-y-3 text-sm">
@@ -2090,7 +2115,7 @@ const FestivePOS = () => {
       const { data: userData } = await supabase.auth.getUser();
       const userId = userData?.user?.id ?? null;
 
-      // Ventana de cierre: desde �ltimo cierre hasta ahora
+      // Ventana de cierre: desde ultimo cierre hasta ahora
       const window = closingFrom && closingTo ? { from: closingFrom, to: closingTo } : await computeClosingWindow();
       const { from, to } = window;
 
@@ -2113,8 +2138,8 @@ const FestivePOS = () => {
         date: new Date().toISOString().slice(0, 10),
         expected_cash: Math.round(totalsByMethod.cash || 0),
         real_cash: Math.round(cashCountedNumber),
-        expected_transfers: Math.round((totalsByMethod.transfer || 0)),
-        real_transfers: Math.round((totalsByMethod.transfer || 0)),
+        expected_transfers: Math.round(totalsByMethod.transfer || 0),
+        real_transfers: Math.round(transferCountedNumber),
         comment: closingNotes || null,
         closed_by: userId,
       };

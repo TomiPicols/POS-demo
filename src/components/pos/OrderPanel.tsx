@@ -16,11 +16,13 @@ type OrderPanelProps = {
   total: number;
   orderLabel?: string;
   paymentMethod: PaymentMethod;
+  pendingNote?: string | null;
   saving?: boolean;
   error?: string | null;
   onPaymentChange: (method: PaymentMethod) => void;
   onUpdateQuantity: (id: string, delta: number) => void;
   onConfirm: () => void | Promise<boolean>;
+  onPendingNoteChange?: (val: string) => void;
 };
 
 const paymentLabels: Record<PaymentMethod, string> = {
@@ -36,11 +38,13 @@ const OrderPanel = ({
   total,
   orderLabel = 'Pedido en curso',
   paymentMethod,
+  pendingNote = '',
   saving = false,
   error = null,
   onPaymentChange,
   onUpdateQuantity,
   onConfirm,
+  onPendingNoteChange,
 }: OrderPanelProps) => {
   const confirmLabel =
     saving ? 'Guardando...' : paymentMethod === 'pending' ? 'Guardar pendiente' : 'Confirmar pedido';
@@ -114,6 +118,18 @@ const OrderPanel = ({
             );
           })}
         </div>
+        {paymentMethod === 'pending' && (
+          <div className="mt-3">
+            <div className="text-xs text-sidebarMuted mb-1">Nota (opcional)</div>
+            <textarea
+              value={pendingNote ?? ''}
+              onChange={(e) => onPendingNoteChange?.(e.target.value)}
+              rows={2}
+              className="w-full rounded-lg border border-borderSoft bg-panelAlt text-sm text-text px-3 py-2 focus:outline-none focus:ring-2 focus:ring-accent/30 resize-none"
+              placeholder="Nombre de la persona o nota"
+            />
+          </div>
+        )}
       </div>
 
       <div className="space-y-1 text-sm">
