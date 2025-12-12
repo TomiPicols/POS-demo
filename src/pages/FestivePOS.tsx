@@ -27,11 +27,10 @@ type DraftOrder = {
 const formatCLP = (value: number) =>
   new Intl.NumberFormat('es-CL', { maximumFractionDigits: 0 }).format(value);
 
-const paymentMethods = ['cash', 'card', 'transfer', 'pending'] as const;
+const paymentMethods = ['cash', 'transfer', 'pending'] as const;
 
 const paymentMethodDisplay: Record<PaymentMethod | 'other', string> = {
   cash: 'Efectivo',
-  card: 'Tarjeta',
   transfer: 'Transferencia',
   pending: 'Pendiente',
   other: 'Otro',
@@ -114,7 +113,7 @@ const FestivePOS = () => {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState('Todo');
   const [drafts, setDrafts] = useState<DraftOrder[]>([
-    { id: '1', label: 'Pedido 1', items: [], paymentMethod: 'card' },
+    { id: '1', label: 'Pedido 1', items: [], paymentMethod: 'cash' },
   ]);
   const [activeDraftId, setActiveDraftId] = useState('1');
   const [savingOrder, setSavingOrder] = useState(false);
@@ -162,7 +161,9 @@ const FestivePOS = () => {
 
   const currentDraft = drafts.find((d) => d.id === activeDraftId) || drafts[0];
   const orderItems = currentDraft?.items || [];
-  const paymentMethod = currentDraft?.paymentMethod || 'card';
+  const paymentMethod = currentDraft?.paymentMethod || 'cash';
+  const [showManualModal, setShowManualModal] = useState(false);
+  const [manualForm, setManualForm] = useState({ name: '', price: 0, quantity: 1 });
 
   const filteredProducts = useMemo(() => {
     const byCategory =
@@ -215,6 +216,36 @@ const FestivePOS = () => {
     });
   };
 
+  const addManualItem = () => {
+    if (!currentDraft) return;
+    if (!manualForm.name.trim()) {
+      setOrderError('Ingresa un nombre para la Venta rápida.');
+      return;
+    }
+    if (manualForm.price <= 0 || manualForm.quantity <= 0) {
+      setOrderError('Precio y cantidad deben ser mayores a 0.');
+      return;
+    }
+    setOrderError(null);
+    const newId = `manual-${Date.now()}`;
+    updateDraft((draft) => ({
+      ...draft,
+      items: [
+        ...draft.items,
+        {
+          id: newId,
+          name: manualForm.name.trim(),
+          price: manualForm.price,
+          quantity: manualForm.quantity,
+          emoji: '\u{1F4DD}',
+          isManual: true,
+        },
+      ],
+    }));
+    setManualForm({ name: '', price: 0, quantity: 1 });
+    setShowManualModal(false);
+  };
+
   const updateQuantity = (id: string, delta: number) => {
     if (!currentDraft) return;
     const product = products.find((p) => p.id === id);
@@ -257,7 +288,7 @@ const FestivePOS = () => {
     }, 0);
     const nextNumber = maxNumber + 1;
     const newId = `${Date.now()}`;
-    setDrafts((prev) => [...prev, { id: newId, label: `Pedido ${nextNumber}`, items: [], paymentMethod: 'card' }]);
+    setDrafts((prev) => [...prev, { id: newId, label: `Pedido ${nextNumber}`, items: [], paymentMethod: 'cash' }]);
     setActiveDraftId(newId);
   };
 
@@ -361,20 +392,24 @@ const FestivePOS = () => {
     opts?: { silent?: boolean },
   ): Promise<boolean> => {
     const silent = opts?.silent ?? false;
-    const ids = itemsToSave.map((i) => Number.parseInt(i.id, 10));
+    const regularItems = itemsToSave.filter((i) => !i.isManual && Number.isInteger(Number.parseInt(i.id, 10)));
+    const manualItems = itemsToSave.filter((i) => i.isManual);
+    const ids = regularItems.map((i) => Number.parseInt(i.id, 10));
 
     try {
-      const { data: stockRows, error: stockError } = await supabase
-        .from('products')
-        .select('id, stock')
-        .in('id', ids);
-      if (stockError) throw stockError;
-      const stockMap = new Map<number, number>();
-      (stockRows || []).forEach((r: any) => stockMap.set(r.id, Number(r.stock ?? 0)));
-      const lacking = itemsToSave.filter((item) => (stockMap.get(Number(item.id)) ?? 0) < item.quantity);
-      if (lacking.length) {
-        if (!silent) setOrderError(`Stock insuficiente para: ${lacking.map((i) => i.name).join(', ')}`);
-        return false;
+      if (regularItems.length) {
+        const { data: stockRows, error: stockError } = await supabase
+          .from('products')
+          .select('id, stock')
+          .in('id', ids);
+        if (stockError) throw stockError;
+        const stockMap = new Map<number, number>();
+        (stockRows || []).forEach((r: any) => stockMap.set(r.id, Number(r.stock ?? 0)));
+        const lacking = regularItems.filter((item) => (stockMap.get(Number(item.id)) ?? 0) < item.quantity);
+        if (lacking.length) {
+          if (!silent) setOrderError(`Stock insuficiente para: ${lacking.map((i) => i.name).join(', ')}`);
+          return false;
+        }
       }
     } catch (err: any) {
       if (!silent) setOrderError(err?.message ?? 'No se pudo validar stock.');
@@ -383,6 +418,17 @@ const FestivePOS = () => {
     }
 
     try {
+      const manualProductId =
+        manualItems.length > 0
+          ? products.find((p) => p.name.toLowerCase().includes('venta manual'))?.id ??
+            products[0]?.id ??
+            null
+          : null;
+      if (manualItems.length > 0 && !manualProductId) {
+        setOrderError('Crea al menos un producto para registrar ventas rapidas.');
+        return false;
+      }
+
       const { data: sale, error: saleError } = await supabase
         .from('sales')
         .insert({
@@ -398,13 +444,22 @@ const FestivePOS = () => {
 
       if (saleError || !sale) throw saleError;
 
-      const saleItemsPayload = itemsToSave.map((item) => ({
-        sale_id: sale.id,
-        product_id: Number.parseInt(item.id, 10),
-        quantity: item.quantity,
-        unit_price: item.price,
-        total_price: item.price * item.quantity,
-      }));
+      const saleItemsPayload = [
+        ...regularItems.map((item) => ({
+          sale_id: sale.id,
+          product_id: Number.parseInt(item.id, 10),
+          quantity: item.quantity,
+          unit_price: item.price,
+          total_price: item.price * item.quantity,
+        })),
+        ...manualItems.map((item) => ({
+          sale_id: sale.id,
+          product_id: manualProductId,
+          quantity: item.quantity,
+          unit_price: item.price,
+          total_price: item.price * item.quantity,
+        })),
+      ];
 
       const { error: itemsError } = await supabase.from('sale_items').insert(saleItemsPayload);
       if (itemsError) {
@@ -412,15 +467,16 @@ const FestivePOS = () => {
         throw itemsError;
       }
 
-      const stockUpdates = saleItemsPayload.map(async (item) => {
+      const stockUpdates = regularItems.map(async (item) => {
+        const productId = Number.parseInt(item.id, 10);
         const { data: current } = await supabase
           .from('products')
           .select('stock')
-          .eq('id', item.product_id)
+          .eq('id', productId)
           .single();
         const currentStock = Number(current?.stock ?? 0);
         const newStock = Math.max(0, currentStock - item.quantity);
-        const { error: updError } = await supabase.from('products').update({ stock: newStock }).eq('id', item.product_id);
+        const { error: updError } = await supabase.from('products').update({ stock: newStock }).eq('id', productId);
         if (updError) throw updError;
       });
 
@@ -469,12 +525,6 @@ const FestivePOS = () => {
 
   const confirmOrder = async (): Promise<boolean> => {
     if (!orderItems.length || savingOrder) return false;
-
-    const invalidProduct = orderItems.some((item) => Number.isNaN(Number.parseInt(item.id, 10)));
-    if (invalidProduct) {
-      setOrderError('Productos invalidos en el pedido.');
-      return false;
-    }
 
     setSavingOrder(true);
     setOrderError(null);
@@ -587,7 +637,7 @@ const FestivePOS = () => {
     };
   }, [activeNav, overviewDateFilter, overviewMethodFilter, pendingFilter, pendingDateFilter, pendingSearch]);
 
-  // Polling más corto (15s) como respaldo multi-puesto
+  // Polling m�s corto (15s) como respaldo multi-puesto
   useEffect(() => {
     const interval = setInterval(() => {
       if (activeNav === 'overview') loadOverviewSales();
@@ -863,7 +913,7 @@ const FestivePOS = () => {
   );
 
   const closingTotals = useMemo(() => {
-    const initial = { cash: 0, card: 0, transfer: 0, pending: 0, other: 0 } as Record<
+    const initial = { cash: 0, transfer: 0, pending: 0, other: 0 } as Record<
       PaymentMethod | 'other',
       number
     >;
@@ -890,7 +940,6 @@ const FestivePOS = () => {
     });
     rows.push('');
     rows.push(`Efectivo,${closingTotals.cash}`);
-    rows.push(`Tarjeta,${closingTotals.card}`);
     rows.push(`Transferencia,${closingTotals.transfer}`);
     rows.push(`Pendiente,${closingTotals.pending}`);
     rows.push(`Total,${closingTotal}`);
@@ -933,7 +982,7 @@ const FestivePOS = () => {
           <h2>Cierre de caja</h2>
           <div class="totals">
             <div>Efectivo: $${formatCLP(closingTotals.cash)}</div>
-            <div>Tarjeta: $${formatCLP(closingTotals.card)}</div>
+            <div>
             <div>Transferencia: $${formatCLP(closingTotals.transfer)}</div>
             <div>Pendiente: $${formatCLP(closingTotals.pending)}</div>
             <div><strong>Total: $${formatCLP(closingTotal)}</strong></div>
@@ -983,7 +1032,7 @@ const FestivePOS = () => {
               options={[
                 { value: 'all', label: 'Solo pendientes' },
                 { value: 'cash', label: 'Efectivo' },
-                { value: 'card', label: 'Tarjeta' },
+                
                 { value: 'transfer', label: 'Transferencia' },
                 { value: 'pending', label: 'Pendiente' },
               ]}
@@ -993,8 +1042,8 @@ const FestivePOS = () => {
               onChange={(val) => setPendingDateFilter(val as 'today' | '7d' | '30d' | 'all')}
               options={[
                 { value: 'today', label: 'Hoy' },
-                { value: '7d', label: 'Últimos 7 días' },
-                { value: '30d', label: 'Últimos 30 días' },
+                { value: '7d', label: '�ltimos 7 d�as' },
+                { value: '30d', label: '�ltimos 30 d�as' },
                 { value: 'all', label: 'Todo' },
               ]}
             />
@@ -1031,9 +1080,9 @@ const FestivePOS = () => {
               {pendingDateFilter === 'today'
                 ? 'Hoy'
                 : pendingDateFilter === '7d'
-                  ? 'Últimos 7 días'
+                  ? '�ltimos 7 d�as'
                   : pendingDateFilter === '30d'
-                    ? 'Últimos 30 días'
+                    ? '�ltimos 30 d�as'
                     : 'Todo'}
             </div>
           </div>
@@ -1147,14 +1196,14 @@ const FestivePOS = () => {
             onClick={() => setPendingModalSale(null)}
             className="w-9 h-9 rounded-full border border-borderSoft text-textSoft hover:text-text"
           >
-            ×
+            �
           </button>
         </div>
 
         <div className="space-y-2">
-          <div className="text-sm font-semibold">Método de pago</div>
+          <div className="text-sm font-semibold">M�todo de pago</div>
           <div className="grid grid-cols-3 gap-2">
-            {(['cash', 'card', 'transfer'] as const).map((method) => {
+            {(['cash', 'transfer'] as const).map((method) => {
               const active = pendingModalMethod === method;
               return (
                 <button
@@ -1279,6 +1328,12 @@ const FestivePOS = () => {
           + Nuevo
         </button>
         <button
+          onClick={() => setShowManualModal(true)}
+          className="h-9 px-3 rounded-full text-sm bg-[#c0392b] text-white font-semibold shadow-soft hover:shadow-card transition"
+        >
+          Venta rápida
+        </button>
+        <button
           onClick={deleteDraft}
           className="h-9 px-3 rounded-full text-sm border border-borderSoft text-text hover:border-accent/40 transition"
         >
@@ -1288,7 +1343,7 @@ const FestivePOS = () => {
 
       {isOffline && (
         <div className="w-full bg-amber-100 border border-amber-300 text-amber-800 text-sm rounded-xl px-3 py-2 shadow-soft">
-          Sin conexión: los cambios se intentarán cuando vuelva la red.
+          Sin conexi�n: los cambios se intentar�n cuando vuelva la red.
         </div>
       )}
 
@@ -1362,7 +1417,7 @@ const FestivePOS = () => {
               options={[
                 { value: 'today', label: 'Hoy' },
                 { value: 'yesterday', label: 'Ayer' },
-                { value: 'last7', label: 'Últimos 7' },
+                { value: 'last7', label: '�ltimos 7' },
                 { value: 'all', label: 'Todas' },
               ]}
             />
@@ -1372,7 +1427,7 @@ const FestivePOS = () => {
               options={[
                 { value: 'all', label: 'Método: todos' },
                 { value: 'cash', label: 'Efectivo' },
-                { value: 'card', label: 'Tarjeta' },
+                
                 { value: 'transfer', label: 'Transferencia' },
                 { value: 'pending', label: 'Pendiente' },
               ]}
@@ -1409,7 +1464,7 @@ const FestivePOS = () => {
                   </td>
                   <td className="py-2 pr-4 font-semibold">${formatCLP(s.total_amount)}</td>
                   <td className="py-2 pr-4 uppercase text-xs">{getPaymentLabel(s.payment_method)}</td>
-                  <td className="py-2 pr-4 text-textSoft">{s.notes || '—'}</td>
+                  <td className="py-2 pr-4 text-textSoft">{s.notes || '�'}</td>
                 </tr>
               ))}
               {!overviewSales.length && !loadingOverview && (
@@ -1488,7 +1543,7 @@ const FestivePOS = () => {
                     </td>
                     <td className="py-2 pr-4 font-semibold">${formatCLP(s.total_amount)}</td>
                     <td className="py-2 pr-4 uppercase text-xs">{getPaymentLabel(s.payment_method)}</td>
-                    <td className="py-2 pr-4 text-textSoft">{s.notes || '—'}</td>
+                    <td className="py-2 pr-4 text-textSoft">{s.notes || '�'}</td>
                   </tr>
                 ))}
                 {!closingSales.length && !loadingClosing && (
@@ -1530,7 +1585,7 @@ const FestivePOS = () => {
           <div className="space-y-2 text-sm">
             <div className="text-xs text-textSoft uppercase tracking-[0.12em]">Desglose por método</div>
             <div className="grid grid-cols-2 gap-2">
-              {(['cash', 'card', 'transfer', 'pending'] as const).map((method) => (
+              {(['cash', 'transfer', 'pending'] as const).map((method) => (
                 <div
                   key={method}
                   className="flex items-center justify-between rounded-lg bg-panelAlt border border-borderSoft px-3 py-2"
@@ -1727,17 +1782,11 @@ const FestivePOS = () => {
           {newProductModal && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-sm p-4">
               <div className="w-full max-w-md rounded-2xl bg-card border border-borderSoft shadow-card p-5 space-y-4">
-                <div className="flex items-start justify-between">
+                <div className="flex items-start">
                   <div>
                     <div className="text-sm font-semibold">Nuevo producto</div>
                     <div className="text-xs text-textSoft">Completa los datos y guarda</div>
                   </div>
-                  <button
-                    onClick={() => setNewProductModal(false)}
-                    className="h-8 px-3 rounded-md border border-borderSoft text-xs text-text hover:border-accent/40 transition"
-                  >
-                    Cerrar
-                  </button>
                 </div>
                 <div className="space-y-3 text-sm">
                   <label className="flex flex-col gap-1">
@@ -1890,8 +1939,8 @@ const FestivePOS = () => {
               </div>
               <button
                 onClick={handleLogout}
-                className="md:hidden w-9 h-9 rounded-full border border-borderSoft bg-panel text-textSoft hover:border-accent/50 hover:text-accent transition shadow-soft flex items-center justify-center"
-                aria-label="Cerrar sesión"
+                className="w-9 h-9 rounded-full border border-borderSoft bg-panel text-textSoft hover:border-accent/50 hover:text-accent transition shadow-soft flex items-center justify-center"
+                aria-label="Cerrar sesi�n"
               >
                 <svg viewBox="0 0 24 24" className="w-4 h-4" stroke="currentColor" fill="none" strokeWidth="1.6">
                   <path d="M10 17l-5-5 5-5" />
@@ -1939,7 +1988,7 @@ const FestivePOS = () => {
                     onClick={() => setShowOrderMobile(false)}
                     className="text-sidebarMuted text-lg px-2"
                   >
-                    ×
+                    �
                   </button>
                 </div>
                 <div className="overflow-y-auto max-h-[50vh] pr-1">
@@ -1967,6 +2016,62 @@ const FestivePOS = () => {
         </>
       )}
 
+      {showManualModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md rounded-2xl bg-card border border-borderSoft shadow-card p-5 space-y-4">
+            <div>
+              <div className="text-sm font-semibold">Venta rápida</div>
+              <div className="text-xs text-textSoft">Agrega un producto libre al pedido actual</div>
+            </div>
+            <div className="space-y-3 text-sm">
+              <label className="flex flex-col gap-1">
+                <span className="text-textSoft">Nombre</span>
+                <input
+                  value={manualForm.name}
+                  onChange={(e) => setManualForm((prev) => ({ ...prev, name: e.target.value }))}
+                  className="w-full h-9 rounded-md border border-borderSoft bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-accent/30"
+                />
+              </label>
+              <label className="flex flex-col gap-1">
+                <span className="text-textSoft">Precio</span>
+                <input
+                  value={manualForm.price}
+                  onChange={(e) => setManualForm((prev) => ({ ...prev, price: Number(e.target.value) || 0 }))}
+                  className="w-full h-9 rounded-md border border-borderSoft bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-accent/30"
+                  inputMode="numeric"
+                />
+              </label>
+              <label className="flex flex-col gap-1">
+                <span className="text-textSoft">Cantidad</span>
+                <input
+                  value={manualForm.quantity}
+                  onChange={(e) => setManualForm((prev) => ({ ...prev, quantity: Number(e.target.value) || 1 }))}
+                  className="w-full h-9 rounded-md border border-borderSoft bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-accent/30"
+                  inputMode="numeric"
+                />
+              </label>
+            </div>
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <button
+                onClick={() => {
+                  setManualForm({ name: '', price: 0, quantity: 1 });
+                  setShowManualModal(false);
+                }}
+                className="h-9 px-3 rounded-md border border-borderSoft text-xs text-text hover:border-accent/40 transition"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={addManualItem}
+                className="h-9 px-3 rounded-md bg-[#c0392b] text-white text-xs font-semibold shadow-soft hover:shadow-card transition"
+              >
+                Agregar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {pendingModal}
 
       <MobileNav
@@ -1985,7 +2090,7 @@ const FestivePOS = () => {
       const { data: userData } = await supabase.auth.getUser();
       const userId = userData?.user?.id ?? null;
 
-      // Ventana de cierre: desde último cierre hasta ahora
+      // Ventana de cierre: desde �ltimo cierre hasta ahora
       const window = closingFrom && closingTo ? { from: closingFrom, to: closingTo } : await computeClosingWindow();
       const { from, to } = window;
 
@@ -1997,7 +2102,7 @@ const FestivePOS = () => {
         .lt('sales.created_at', to);
       if (itemError) throw itemError;
 
-      const totalsByMethod: Record<string, number> = { cash: 0, card: 0, transfer: 0, pending: 0, other: 0 };
+      const totalsByMethod: Record<string, number> = { cash: 0, transfer: 0, pending: 0, other: 0 };
       (itemRows || []).forEach((row: any) => {
         const methodRaw = row.sales?.payment_method || 'other';
         const method = paymentMethods.includes(methodRaw as PaymentMethod) ? methodRaw : 'other';
@@ -2008,8 +2113,8 @@ const FestivePOS = () => {
         date: new Date().toISOString().slice(0, 10),
         expected_cash: Math.round(totalsByMethod.cash || 0),
         real_cash: Math.round(cashCountedNumber),
-        expected_transfers: Math.round((totalsByMethod.card || 0) + (totalsByMethod.transfer || 0)),
-        real_transfers: Math.round((totalsByMethod.card || 0) + (totalsByMethod.transfer || 0)),
+        expected_transfers: Math.round((totalsByMethod.transfer || 0)),
+        real_transfers: Math.round((totalsByMethod.transfer || 0)),
         comment: closingNotes || null,
         closed_by: userId,
       };

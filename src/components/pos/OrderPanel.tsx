@@ -4,9 +4,10 @@ type OrderItem = {
   emoji: string;
   price: number;
   quantity: number;
+  isManual?: boolean;
 };
 
-type PaymentMethod = 'cash' | 'card' | 'transfer' | 'pending';
+type PaymentMethod = 'cash' | 'transfer' | 'pending';
 
 type OrderPanelProps = {
   items: OrderItem[];
@@ -24,7 +25,6 @@ type OrderPanelProps = {
 
 const paymentLabels: Record<PaymentMethod, string> = {
   cash: 'Efectivo',
-  card: 'Tarjeta',
   transfer: 'Transferencia',
   pending: 'Pendiente',
 };
